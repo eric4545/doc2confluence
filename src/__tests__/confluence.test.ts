@@ -396,4 +396,70 @@ describe('ConfluenceClient', () => {
       expect(result).toEqual(updateResponse);
     });
   });
+
+  // Add new describe block for ADF to Storage Format Conversion
+  describe('ADF to Storage Format Conversion', () => {
+    let client: ConfluenceClient; // Use the client to access the private method
+
+    beforeEach(() => {
+      // Initialize a client instance - auth details don't matter for this test
+      client = new ConfluenceClient('https://example.com', {
+        email: 'test@example.com',
+        apiToken: 'test-token',
+      });
+    });
+
+    test('should convert ADF codeBlock with mermaid language to mermaid macro', () => {
+      const adfInput = {
+        type: 'doc',
+        version: 1,
+        content: [
+          {
+            type: 'codeBlock',
+            attrs: {
+              language: 'mermaid',
+            },
+            content: [
+              {
+                type: 'text',
+                text: 'graph TD;\nA-->B;',
+              },
+            ],
+          },
+        ],
+      };
+      // Access the private method for testing via a type assertion
+      const convertADFToStorage = (client as any).convertADFToStorage.bind(client);
+      const expectedOutput =
+        '<ac:structured-macro ac:name="mermaid"><ac:plain-text-body><![CDATA[graph TD;\nA-->B;]]></ac:plain-text-body></ac:structured-macro>';
+      expect(convertADFToStorage(adfInput)).toBe(expectedOutput);
+    });
+
+    test('should convert standard ADF codeBlock to code macro', () => {
+      const adfInput = {
+        type: 'doc',
+        version: 1,
+        content: [
+          {
+            type: 'codeBlock',
+            attrs: {
+              language: 'javascript',
+            },
+            content: [
+              {
+                type: 'text',
+                text: 'console.log("Hello");',
+              },
+            ],
+          },
+        ],
+      };
+      const convertADFToStorage = (client as any).convertADFToStorage.bind(client);
+      const expectedOutput =
+        '<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">javascript</ac:parameter><ac:plain-text-body><![CDATA[console.log("Hello");]]></ac:plain-text-body></ac:structured-macro>';
+      expect(convertADFToStorage(adfInput)).toBe(expectedOutput);
+    });
+
+    // Add more tests for other ADF to Storage conversions here if needed
+  });
 });

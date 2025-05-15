@@ -883,11 +883,16 @@ export class ConfluenceClient {
           break;
         case 'codeBlock': {
           const language = (node.attrs as { language?: string })?.language || '';
-          result += '<ac:structured-macro ac:name="code">';
-          if (language) {
-            result += `<ac:parameter ac:name="language">${language}</ac:parameter>`;
+          if (language === 'mermaid') {
+            result += '<ac:structured-macro ac:name="mermaid">';
+            result += `<ac:plain-text-body><![CDATA[${this.processADFNodes(node.content || [])}]]></ac:plain-text-body></ac:structured-macro>`;
+          } else {
+            result += '<ac:structured-macro ac:name="code">';
+            if (language) {
+              result += `<ac:parameter ac:name="language">${language}</ac:parameter>`;
+            }
+            result += `<ac:plain-text-body><![CDATA[${this.processADFNodes(node.content || [])}]]></ac:plain-text-body></ac:structured-macro>`;
           }
-          result += `<ac:plain-text-body><![CDATA[${this.processADFNodes(node.content || [])}]]></ac:plain-text-body></ac:structured-macro>`;
           break;
         }
         case 'blockquote':
