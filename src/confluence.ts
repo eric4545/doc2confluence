@@ -21,6 +21,7 @@ export interface ConfluenceResponse {
   links: {
     webui: string;
   };
+  parentId?: string;
 }
 
 export interface ConfluenceSearchResponse {
@@ -54,14 +55,58 @@ export class ConfluenceClient {
   private baseUrl: string;
   private email: string;
   private apiToken: string;
+  private personalAccessToken: string | null;
   private debug: boolean;
+  private authType: 'basic' | 'pat';
 
-  constructor(baseUrl: string, email: string, apiToken: string, debug = false) {
+  constructor(
+    baseUrl: string,
+    auth: {
+      // Either provide email + apiToken for Basic auth
+      email?: string;
+      apiToken?: string;
+      // Or provide a personal access token for PAT auth
+      personalAccessToken?: string;
+    },
+    debug = false
+  ) {
     // Remove trailing slashes to avoid path issues
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.email = email;
-    this.apiToken = apiToken;
+
+    // Determine auth type and validate required fields
+    if (auth.personalAccessToken) {
+      this.authType = 'pat';
+      this.personalAccessToken = auth.personalAccessToken;
+      this.email = '';
+      this.apiToken = '';
+    } else if (auth.email && auth.apiToken) {
+      this.authType = 'basic';
+      this.email = auth.email;
+      this.apiToken = auth.apiToken;
+      this.personalAccessToken = null;
+    } else {
+      throw new Error('Authentication requires either email+apiToken or personalAccessToken');
+    }
+
     this.debug = debug;
+  }
+
+  // DRY method for auth headers
+  private getAuthHeaders(additionalHeaders = {}): Record<string, string> {
+    let authHeader;
+
+    if (this.authType === 'pat') {
+      authHeader = `Bearer ${this.personalAccessToken}`;
+    } else {
+      // Basic auth with email and API token
+      authHeader = `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`;
+    }
+
+    return {
+      'Authorization': authHeader,
+      'Accept': 'application/json',
+      ...additionalHeaders
+    };
   }
 
   private log(...args: any[]) {
@@ -91,10 +136,7 @@ export class ConfluenceClient {
 
     try {
       const response = await fetch(`${endpoint}?${params}`, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -161,11 +203,9 @@ export class ConfluenceClient {
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
+        headers: this.getAuthHeaders({
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        }),
         body: JSON.stringify(body),
       });
 
@@ -187,7 +227,7 @@ export class ConfluenceClient {
             endpoint,
             method: 'POST',
             headers: {
-              'Authorization': 'Basic **REDACTED**',
+              'Authorization': '**REDACTED**',
               'Content-Type': 'application/json',
               'Accept': 'application/json',
             },
@@ -234,11 +274,9 @@ export class ConfluenceClient {
 
       const response = await fetch(endpoint, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
+        headers: this.getAuthHeaders({
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        }),
         body: JSON.stringify(body),
       });
 
@@ -259,7 +297,7 @@ export class ConfluenceClient {
             endpoint,
             method: 'PUT',
             headers: {
-              'Authorization': 'Basic **REDACTED**',
+              'Authorization': '**REDACTED**',
               'Content-Type': 'application/json',
               'Accept': 'application/json',
             },
@@ -284,10 +322,7 @@ export class ConfluenceClient {
 
     try {
       const response = await fetch(endpoint, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -338,10 +373,7 @@ export class ConfluenceClient {
 
     try {
       const response = await fetch(`${endpoint}?${params}`, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -364,26 +396,51 @@ export class ConfluenceClient {
 
       const results = await response.json() as ConfluenceSearchResponse;
 
-      // If parent ID is provided, filter results to match the parent
-      if (parentId && results.results && results.results.length > 0) {
-        // Find a page with matching parent ID
-        for (const page of results.results) {
-          // If we need full page details to check parentId
-          try {
-            const pageDetails = await this.getPage(page.id);
-            if (pageDetails && 'parentId' in pageDetails && pageDetails.parentId === parentId) {
-              return page;
-            }
-          } catch (error) {
-            this.log(`Error getting details for page ${page.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          }
-        }
-        // If we searched all pages and none match the parent, return null
+      if (!results.results || results.results.length === 0) {
+        // No pages found with this title
         return null;
       }
 
-      // If no parent ID specified or no results, return the first match
-      return results.results[0] || null;
+      // If we have results but no parentId is specified, just return the first match
+      if (!parentId) {
+        this.log(`Found page with title "${title}" (no parent specified)`);
+        return results.results[0];
+      }
+
+      // If parentId is provided, we need to check each result for matching parentId
+      this.log(`Found ${results.results.length} pages with title "${title}", checking for parentId "${parentId}"`);
+
+      // First try checking if any of the returned results already have parentId property
+      const pageWithParent = results.results.find(page => page.parentId === parentId);
+      if (pageWithParent) {
+        this.log(`Found page with matching parentId directly in results`);
+        return pageWithParent;
+      }
+
+      // We need to fetch full details for each page to check parentId
+      for (const page of results.results) {
+        try {
+          const pageDetails = await this.getPage(page.id);
+          // Check if the page has the specified parentId
+          if (pageDetails && 'parentId' in pageDetails && pageDetails.parentId === parentId) {
+            this.log(`Found page with matching parentId: ${pageDetails.id}`);
+            return page;
+          }
+        } catch (error) {
+          this.log(`Error getting details for page ${page.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+
+      // If we're looking for a specific parent but none match, we should handle this specially
+      // Return the first page with the matching title but log a warning
+      if (results.results.length > 0) {
+        this.log(`WARNING: Found pages with title "${title}" but none with parentId "${parentId}"`);
+        this.log(`Returning first matching page, but Confluence may reject creation due to title conflict`);
+        return results.results[0];
+      }
+
+      // No pages found that match both title and parentId
+      return null;
     } catch (error) {
       if (this.debug && !(error instanceof Error)) {
         console.error('Unexpected error:', error);
@@ -431,9 +488,30 @@ export class ConfluenceClient {
         const currentVersion = existingPage.version?.number || 1;
         result = await this.updatePage(existingPage.id, title, content, currentVersion + 1);
       } else {
-        // Create new page
-        this.log(`Page "${title}" does not exist, creating new page...`);
-        result = await this.createPage(spaceKey, title, content, parentId);
+        try {
+          // Create new page
+          this.log(`Page "${title}" does not exist, creating new page...`);
+          result = await this.createPage(spaceKey, title, content, parentId);
+        } catch (error: any) {
+          // Improve error handling for duplicate title scenarios
+          if (error.message && error.message.includes("title already exists")) {
+            // Try to find the page again, but ignore parentId this time
+            this.log(`Error creating page: Title conflict detected`);
+            this.log(`Searching for any page with title "${title}" regardless of parent...`);
+
+            const conflictingPage = await this.getPageByTitle(spaceKey, title);
+            if (conflictingPage) {
+              this.log(`Found existing page with title "${title}" (ID: ${conflictingPage.id})`);
+              throw new Error(
+                `Cannot create page: A page with title "${title}" already exists in space "${spaceKey}". ` +
+                `You must use a unique title for each page in a space, even across different parent pages. ` +
+                `Try using a different title or update the existing page with ID ${conflictingPage.id}.`
+              );
+            }
+          }
+          // If not a title conflict or no conflicting page found, rethrow the original error
+          throw error;
+        }
       }
 
       // Handle labels if provided
@@ -463,10 +541,7 @@ export class ConfluenceClient {
 
       const pageResponse = await fetch(pageEndpoint, {
         method: 'GET',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!pageResponse.ok) {
@@ -498,10 +573,7 @@ export class ConfluenceClient {
 
       const contentResponse = await fetch(`${contentEndpoint}?${params}`, {
         method: 'GET',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!contentResponse.ok) {
@@ -529,11 +601,7 @@ export class ConfluenceClient {
 
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(body),
       });
 
@@ -570,10 +638,7 @@ export class ConfluenceClient {
 
     try {
       const response = await fetch(endpoint, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -608,10 +673,7 @@ export class ConfluenceClient {
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          ...form.getHeaders(),
-        },
+        headers: this.getAuthHeaders(form.getHeaders()),
         body: form,
       });
 
