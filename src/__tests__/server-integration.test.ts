@@ -76,7 +76,7 @@ describe('Server/Data Center Integration Tests', () => {
     // Test space endpoint
     await client.getSpaceByKey('TEST');
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/space/TEST'),
+      expect.stringContaining('/rest/api/space?spaceKey=TEST'),
       expect.any(Object)
     );
 

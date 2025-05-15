@@ -211,7 +211,7 @@ describe('ConfluenceClient', () => {
       // Verify server API endpoint is used
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [url] = mockFetch.mock.calls[0];
-      expect(url).toContain('/space/TEST');
+      expect(url).toContain('/rest/api/space?spaceKey=TEST');
     });
   });
 
@@ -255,11 +255,13 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValue({
         ok: false,
         status: 404,
-        statusText: 'Not Found',
-        text: jest.fn().mockResolvedValue('Space not found'),
+        statusText: 'Space not found',
+        text: jest.fn().mockResolvedValue('{"message":"Space not found"}'),
       } as MockResponse);
 
-      await expect(client.getSpaceByKey('NONEXISTENT')).rejects.toThrow('Failed to get space');
+      await expect(client.getSpaceByKey('NONEXISTENT')).rejects.toThrow(
+        'API request failed: 404 Space not found'
+      );
     });
 
     test('createPage should create a page in Confluence', async () => {

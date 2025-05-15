@@ -66,8 +66,20 @@ export function getConfluenceConfig(): ConfluenceConfig {
   // Remove trailing slashes first to prevent double slashes
   config.url = config.url.replace(/\/+$/, '');
 
-  // For Cloud, add /wiki if not already present to prevent /wiki/wiki issues
-  if (config.instanceType === 'cloud' && !config.url.endsWith('/wiki')) {
+  // Special handling for URL formats
+  if (config.instanceType === 'server') {
+    // For Server/Data Center
+    // Check if the URL already ends with /rest
+    if (config.url.endsWith('/rest')) {
+      // Already has /rest suffix, keep it as is
+    }
+    // If URL has /confluence but no /rest
+    else if (config.url.includes('/confluence')) {
+      // Don't add anything, we'll handle this in the buildApiEndpoint method
+    }
+  }
+  // For Cloud, add /wiki if not already present
+  else if (config.instanceType === 'cloud' && !config.url.endsWith('/wiki')) {
     config.url = `${config.url}/wiki`;
   }
 

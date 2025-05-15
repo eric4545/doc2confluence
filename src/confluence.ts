@@ -93,6 +93,21 @@ export class ConfluenceClient {
   ) {
     // Remove trailing slashes to avoid path issues
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+
+    // Normalize baseUrl - make sure we don't have duplicate paths in it
+    // If the URL ends with /rest, save it exactly as is
+    if (this.baseUrl.endsWith('/rest')) {
+      // Already correctly formatted
+    }
+    // For Server/Data Center with default context path
+    else if (this.baseUrl.includes('/confluence') && !this.baseUrl.endsWith('/rest')) {
+      // For consistency, don't add /rest here - we'll add it in buildApiEndpoint
+    }
+    // For Cloud instances
+    else if (instanceType === 'cloud' && !this.baseUrl.endsWith('/wiki')) {
+      this.baseUrl = `${this.baseUrl}/wiki`;
+    }
+
     this.instanceType = instanceType;
 
     // Determine auth type and validate required fields
@@ -111,6 +126,11 @@ export class ConfluenceClient {
     }
 
     this.debug = debug;
+
+    if (this.debug) {
+      console.log(`Using baseUrl: ${this.baseUrl}`);
+      console.log(`Using instance type: ${this.instanceType}`);
+    }
   }
 
   // DRY method for auth headers
@@ -137,24 +157,80 @@ export class ConfluenceClient {
     }
   }
 
+  private async _fetchJson(url: string, fetchOptions: RequestInit = {}): Promise<any> {
+    // Ensure headers from getAuthHeaders are merged with any provided in fetchOptions
+    const headers = {
+      ...this.getAuthHeaders(),
+      ...(fetchOptions.headers || {}),
+    };
+
+    this.log(`Fetching: ${url}`);
+    if (this.debug && Object.keys(fetchOptions).length > 0) {
+      // Clone options for logging to avoid logging body if it's a stream
+      const loggableOptions = { ...fetchOptions };
+      if (loggableOptions.body && typeof loggableOptions.body !== 'string') {
+        loggableOptions.body = '[Stream or non-string body]';
+      }
+      this.log(`With options: ${JSON.stringify(loggableOptions, null, 2)}`);
+    }
+
+    const response = await fetch(url, {
+      ...fetchOptions, // Spread options first
+      headers, // Then override headers
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorData: unknown;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (e) {
+        errorData = { message: errorText };
+      }
+
+      const errorMessage =
+        typeof errorData === 'object' && errorData && 'message' in errorData
+          ? (errorData as { message?: string }).message
+          : response.statusText;
+
+      const error = new Error(`API request failed: ${response.status} ${errorMessage}`);
+
+      if (this.debug) {
+        console.error('Response status:', response.status);
+        console.error('Response text:', errorText);
+        console.error('Request URL:', url);
+        console.error('Request options:', fetchOptions);
+      }
+      throw error;
+    }
+    return response.json();
+  }
+
   // Helper to build the API endpoint properly based on baseUrl and instance type
   private buildApiEndpoint(path: string): string {
     // Important: Don't add '/wiki' if it's already in the baseUrl
     // The baseUrl from config should already include it
     const apiPath = path.startsWith('/') ? path : `/${path}`;
 
-    // If URL contains /confluence, assume it's a server installation
-    const isServerUrl = this.baseUrl.includes('/confluence');
-    const effectiveInstanceType = isServerUrl ? 'server' : this.instanceType;
+    // Detect if baseUrl already ends with /rest to avoid duplication
+    const baseEndsWithRest = this.baseUrl.endsWith('/rest');
+
+    // Use helper to determine instance type
+    const effectiveInstanceType = this.getEffectiveInstanceType();
 
     // For Server/Data Center, use different API paths
     if (effectiveInstanceType === 'server') {
       // Server/Data Center uses different API endpoints
       // If path already starts with /rest/, use it as-is
       if (path.startsWith('/rest/')) {
-        return `${this.baseUrl}${apiPath}`;
+        return `${this.baseUrl}${path.startsWith('/') && baseEndsWithRest ? path.substring(1) : path}`;
       }
+
       // Otherwise, convert Cloud paths to Server/Data Center paths
+      // Avoid duplication of /rest
+      if (baseEndsWithRest) {
+        return `${this.baseUrl}/api${apiPath}`;
+      }
       return `${this.baseUrl}/rest/api${apiPath}`;
     }
 
@@ -162,74 +238,101 @@ export class ConfluenceClient {
     return `${this.baseUrl}${apiPath}`;
   }
 
+  // Helper to determine the effective instance type based on URL
+  private getEffectiveInstanceType(): ConfluenceInstanceType {
+    // If URL contains /confluence, assume it's a server installation
+    return this.baseUrl.includes('/confluence') ? 'server' : this.instanceType;
+  }
+
+  private async _getSpaceByKeyServer(spaceKey: string): Promise<ConfluenceSpace | null> {
+    const endpoint = this.buildApiEndpoint('/space');
+    const params = new URLSearchParams({ spaceKey: spaceKey });
+    const url = `${endpoint}?${params}`;
+    this.log(`Fetching server space information for key ${spaceKey} at: ${url}`);
+    const result = await this._fetchJson(url);
+    // Server API for /space?spaceKey=X returns a list
+    return result.results?.[0] || null;
+  }
+
+  private async _getSpaceByKeyCloud(spaceKey: string): Promise<ConfluenceSpace | null> {
+    const endpoint = this.buildApiEndpoint('/api/v2/spaces');
+    const params = new URLSearchParams({ key: spaceKey, status: 'current', limit: '1' });
+    const url = `${endpoint}?${params}`;
+    this.log(`Fetching cloud space information for key ${spaceKey} at: ${url}`);
+    const result = await this._fetchJson(url);
+    return (result as ConfluenceSpaceResponse).results[0] || null;
+  }
+
   // Add method to get space by key
   async getSpaceByKey(spaceKey: string): Promise<ConfluenceSpace | null> {
-    let endpoint: string;
-    let params: URLSearchParams;
-
-    // If URL contains /confluence, assume it's a server installation
-    const isServerUrl = this.baseUrl.includes('/confluence');
-    const effectiveInstanceType = isServerUrl ? 'server' : this.instanceType;
-
+    const effectiveInstanceType = this.getEffectiveInstanceType();
     if (effectiveInstanceType === 'server') {
-      // Server/Data Center API endpoint
-      endpoint = this.buildApiEndpoint('/space');
-      params = new URLSearchParams({
-        spaceKey: spaceKey, // Correct parameter name as per documentation
-      });
-    } else {
-      // Cloud API endpoint
-      endpoint = this.buildApiEndpoint('/api/v2/spaces');
-      params = new URLSearchParams({
-        key: spaceKey,
-        status: 'current',
-        limit: '1',
-      });
+      return this._getSpaceByKeyServer(spaceKey);
     }
+    return this._getSpaceByKeyCloud(spaceKey);
+  }
 
-    const url = params.toString() ? `${endpoint}?${params}` : endpoint;
-    this.log(`Fetching space information for key ${spaceKey} at: ${url}`);
-
-    try {
-      const response = await fetch(url, {
-        headers: this.getAuthHeaders(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData: unknown;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          errorData = { message: errorText };
-        }
-
-        const error = new Error(
-          `Failed to get space: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
-        );
-        if (this.debug) {
-          console.error('Response status:', response.status);
-          console.error('Response text:', errorText);
-          console.error('Request URL:', url);
-        }
-        throw error;
-      }
-
-      const result = await response.json();
-
-      // Format response based on instance type
-      if (effectiveInstanceType === 'server') {
-        // Server/Data Center returns results array (when using /space endpoint)
-        return result.results?.[0] || null;
-      }
-      // Cloud returns a results array
-      return (result as ConfluenceSpaceResponse).results[0] || null;
-    } catch (error) {
-      if (this.debug && !(error instanceof Error)) {
-        console.error('Unexpected error:', error);
-      }
-      throw error;
+  private async _createPageServer(
+    spaceKey: string,
+    title: string,
+    content: ADFEntity,
+    parentId?: string
+  ): Promise<ConfluenceResponse> {
+    const endpoint = this.buildApiEndpoint('/content');
+    const body: Record<string, unknown> = {
+      type: 'page',
+      title,
+      space: { key: spaceKey },
+      body: {
+        storage: {
+          value: this.convertADFToStorage(content),
+          representation: 'storage',
+        },
+      },
+    };
+    if (parentId) {
+      body.ancestors = [{ id: parentId }];
     }
+    this.log(`Creating server page at: ${endpoint}`);
+    this.log(`Request body: ${JSON.stringify(body, null, 2)}`);
+    return this._fetchJson(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  private async _createPageCloud(
+    spaceKey: string,
+    title: string,
+    content: ADFEntity,
+    parentId?: string
+  ): Promise<ConfluenceResponse> {
+    const endpoint = this.buildApiEndpoint('/api/v2/pages');
+    const space = await this.getSpaceByKey(spaceKey); // Relies on refactored getSpaceByKey
+    if (!space) {
+      throw new Error(`Space with key "${spaceKey}" not found for Cloud page creation.`);
+    }
+    this.log(`Found space for Cloud page: ${space.name} (ID: ${space.id})`);
+    const body: Record<string, unknown> = {
+      spaceId: space.id,
+      status: 'current',
+      title,
+      body: {
+        representation: 'atlas_doc_format',
+        value: JSON.stringify(content),
+      },
+    };
+    if (parentId) {
+      body.parentId = parentId;
+    }
+    this.log(`Creating cloud page at: ${endpoint}`);
+    this.log(`Request body: ${JSON.stringify(body, null, 2)}`);
+    return this._fetchJson(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   }
 
   // Update createPage to use spaceId
@@ -239,108 +342,70 @@ export class ConfluenceClient {
     content: ADFEntity,
     parentId?: string
   ): Promise<ConfluenceResponse> {
-    let endpoint: string;
-    let body: Record<string, unknown>;
-
-    if (this.instanceType === 'server') {
-      // Server/Data Center API endpoint and body format
-      endpoint = this.buildApiEndpoint('/content');
-
-      // For Server/Data Center, we need to create the body differently
-      body = {
-        type: 'page',
-        title,
-        space: {
-          key: spaceKey,
-        },
-        body: {
-          storage: {
-            value: this.convertADFToStorage(content),
-            representation: 'storage',
-          },
-        },
-      };
-
-      if (parentId) {
-        body.ancestors = [{ id: parentId }];
-      }
-    } else {
-      // Cloud API endpoint
-      endpoint = this.buildApiEndpoint('/api/v2/pages');
-
-      // First, get space ID from space key for Cloud
-      const space = await this.getSpaceByKey(spaceKey);
-      if (!space) {
-        throw new Error(`Space with key "${spaceKey}" not found`);
-      }
-
-      this.log(`Found space: ${space.name} (ID: ${space.id})`);
-
-      // Use spaceId instead of space.key for Cloud
-      body = {
-        spaceId: space.id,
-        status: 'current',
-        title,
-        body: {
-          representation: 'atlas_doc_format',
-          value: JSON.stringify(content),
-        },
-      };
-
-      if (parentId) {
-        body.parentId = parentId;
-      }
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    if (effectiveInstanceType === 'server') {
+      return this._createPageServer(spaceKey, title, content, parentId);
     }
+    return this._createPageCloud(spaceKey, title, content, parentId);
+  }
 
-    this.log(`Creating page at: ${endpoint}`);
+  private async _updatePageServer(
+    pageId: string,
+    title: string,
+    content: ADFEntity,
+    version: number
+  ): Promise<ConfluenceResponse> {
+    const endpoint = this.buildApiEndpoint(`/content/${pageId}`);
+    const currentPage = await this.getPage(pageId); // getPage is now refactored
+    const body: Record<string, unknown> = {
+      id: pageId,
+      type: 'page',
+      title,
+      space: { key: currentPage.space?.key },
+      body: {
+        storage: {
+          value: this.convertADFToStorage(content),
+          representation: 'storage',
+        },
+      },
+      version: { number: version },
+    };
+    this.log(`Updating server page at: ${endpoint}`);
     this.log(`Request body: ${JSON.stringify(body, null, 2)}`);
+    return this._fetchJson(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
 
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: this.getAuthHeaders({
-          'Content-Type': 'application/json',
-        }),
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData: unknown;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          // If it's not JSON, use the text as is
-          errorData = { message: errorText };
-        }
-
-        const error = new Error(
-          `Failed to create page: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
-        );
-        if (this.debug) {
-          console.error('Response status:', response.status);
-          console.error('Response text:', errorText);
-          console.error('Request details:', {
-            endpoint,
-            method: 'POST',
-            headers: {
-              Authorization: '**REDACTED**',
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-            body: JSON.stringify(body, null, 2),
-          });
-        }
-        throw error;
-      }
-
-      return response.json() as Promise<ConfluenceResponse>;
-    } catch (error) {
-      if (this.debug && !(error instanceof Error)) {
-        console.error('Unexpected error:', error);
-      }
-      throw error;
-    }
+  private async _updatePageCloud(
+    pageId: string,
+    title: string,
+    content: ADFEntity,
+    version: number
+  ): Promise<ConfluenceResponse> {
+    const endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
+    const body: Record<string, unknown> = {
+      id: pageId,
+      status: 'current',
+      title,
+      body: {
+        representation: 'atlas_doc_format',
+        value: JSON.stringify(content),
+      },
+      version: {
+        number: version,
+        message: `Updated via md2conf (version ${version})`,
+      },
+    };
+    this.log(`Updating cloud page at: ${endpoint}`);
+    this.log(`Request body: ${JSON.stringify(body, null, 2)}`);
+    return this._fetchJson(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   }
 
   async updatePage(
@@ -349,147 +414,128 @@ export class ConfluenceClient {
     content: ADFEntity,
     version: number
   ): Promise<ConfluenceResponse> {
-    let endpoint: string;
-    let body: Record<string, unknown>;
-
-    if (this.instanceType === 'server') {
-      // Server/Data Center API endpoint
-      endpoint = this.buildApiEndpoint(`/content/${pageId}`);
-
-      // Get current page info to keep space key and other details
-      const currentPage = await this.getPage(pageId);
-
-      // For Server/Data Center, format is different
-      body = {
-        id: pageId,
-        type: 'page',
-        title,
-        space: {
-          key: currentPage.space?.key,
-        },
-        body: {
-          storage: {
-            value: this.convertADFToStorage(content),
-            representation: 'storage',
-          },
-        },
-        version: {
-          number: version,
-        },
-      };
-    } else {
-      // Cloud API endpoint
-      endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
-
-      body = {
-        id: pageId,
-        status: 'current',
-        title,
-        body: {
-          representation: 'atlas_doc_format',
-          value: JSON.stringify(content),
-        },
-        version: {
-          number: version,
-          message: `Updated via md2conf (version ${version})`,
-        },
-      };
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    if (effectiveInstanceType === 'server') {
+      return this._updatePageServer(pageId, title, content, version);
     }
+    return this._updatePageCloud(pageId, title, content, version);
+  }
 
-    this.log(`Updating page at: ${endpoint}`);
-    this.log(`Request body: ${JSON.stringify(body, null, 2)}`);
+  private async _getPageServer(pageId: string): Promise<ConfluenceResponse> {
+    const endpoint = this.buildApiEndpoint(`/content/${pageId}?expand=space,version,body.storage`);
+    this.log(`Getting server page from: ${endpoint}`);
+    return this._fetchJson(endpoint);
+  }
 
-    try {
-      const response = await fetch(endpoint, {
-        method: 'PUT',
-        headers: this.getAuthHeaders({
-          'Content-Type': 'application/json',
-        }),
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData: unknown;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          errorData = { message: errorText };
-        }
-
-        const error = new Error(
-          `Failed to update page: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
-        );
-        if (this.debug) {
-          console.error('Response status:', response.status);
-          console.error('Response text:', errorText);
-          console.error('Request details:', {
-            endpoint,
-            method: 'PUT',
-            headers: {
-              Authorization: '**REDACTED**',
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-            body: JSON.stringify(body, null, 2),
-          });
-        }
-        throw error;
-      }
-
-      return response.json() as Promise<ConfluenceResponse>;
-    } catch (error) {
-      if (this.debug && !(error instanceof Error)) {
-        console.error('Unexpected error:', error);
-      }
-      throw error;
-    }
+  private async _getPageCloud(pageId: string): Promise<ConfluenceResponse> {
+    const endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
+    this.log(`Getting cloud page from: ${endpoint}`);
+    return this._fetchJson(endpoint);
   }
 
   async getPage(pageId: string): Promise<ConfluenceResponse> {
-    let endpoint: string;
-
-    if (this.instanceType === 'server') {
-      // Server/Data Center API endpoint
-      endpoint = this.buildApiEndpoint(`/content/${pageId}?expand=space,version,body.storage`);
-    } else {
-      // Cloud API endpoint
-      endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    if (effectiveInstanceType === 'server') {
+      return this._getPageServer(pageId);
     }
+    return this._getPageCloud(pageId);
+  }
 
-    this.log(`Getting page from: ${endpoint}`);
+  // Helper to check if a page matches a parentId, considering instance type
+  private _doesPageMatchParent(
+    page: ConfluenceResponse,
+    parentId: string,
+    instanceType: ConfluenceInstanceType
+  ): boolean {
+    if (instanceType === 'server') {
+      return page.ancestors?.some((ancestor) => ancestor.id === parentId) || false;
+    }
+    return page.parentId === parentId;
+  }
 
-    try {
-      const response = await fetch(endpoint, {
-        headers: this.getAuthHeaders(),
-      });
+  private async _getPageByTitleServer(
+    spaceKey: string,
+    title: string,
+    parentId?: string
+  ): Promise<ConfluenceResponse | null> {
+    const endpoint = this.buildApiEndpoint('/content');
+    const params = new URLSearchParams({
+      title,
+      spaceKey,
+      expand: 'version,space,body.storage,ancestors', // Ensure ancestors is expanded for server
+      status: 'current',
+    });
+    this.log(`Searching for server page at: ${endpoint}?${params}`);
+    const data = await this._fetchJson(`${endpoint}?${params}`);
+    const results: ConfluenceResponse[] = data.results || [];
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData: unknown;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          errorData = { message: errorText };
+    if (!results || results.length === 0) return null;
+    if (!parentId) return results[0];
+
+    // Server needs to check ancestors from the already expanded data
+    const pageWithParent = results.find((page) =>
+      this._doesPageMatchParent(page, parentId, 'server')
+    );
+    if (pageWithParent) return pageWithParent;
+
+    // Fallback warning logic (if needed, or simplify if direct check is enough)
+    this.log(
+      `WARNING: Found server pages with title "${title}" but none with parentId "${parentId}" in initial expanded data.`
+    );
+    return results[0];
+  }
+
+  private async _getPageByTitleCloud(
+    spaceKey: string,
+    title: string,
+    parentId?: string
+  ): Promise<ConfluenceResponse | null> {
+    const space = await this.getSpaceByKey(spaceKey);
+    if (!space) {
+      throw new Error(`Space with key "${spaceKey}" not found for Cloud page search.`);
+    }
+    this.log(`Found space for Cloud page search: ${space.name} (ID: ${space.id})`);
+
+    const endpoint = this.buildApiEndpoint('/api/v2/pages');
+    const params = new URLSearchParams({
+      title,
+      status: 'current',
+      limit: '100',
+      spaceId: space.id,
+    });
+    this.log(`Searching for cloud page at: ${endpoint}?${params}`);
+    const data = (await this._fetchJson(`${endpoint}?${params}`)) as ConfluenceSearchResponse;
+    const results: ConfluenceResponse[] = data.results || [];
+
+    if (!results || results.length === 0) return null;
+    if (!parentId) return results[0];
+
+    // Cloud might need to fetch full page details if parentId isn't in search results
+    // For now, assuming direct parentId check on results is sufficient, or that getPage includes it if called
+    const pageWithParent = results.find((page) =>
+      this._doesPageMatchParent(page, parentId, 'cloud')
+    );
+    if (pageWithParent) return pageWithParent;
+
+    // If not found directly, iterate and fetch full details (original logic)
+    for (const page of results) {
+      try {
+        const pageDetails = await this.getPage(page.id); // getPage is refactored
+        if (this._doesPageMatchParent(pageDetails, parentId, 'cloud')) {
+          this.log(`Found cloud page with matching parentId after full fetch: ${pageDetails.id}`);
+          return pageDetails;
         }
-
-        const error = new Error(
-          `Failed to get page: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
+      } catch (error) {
+        this.log(
+          `Error getting details for cloud page ${page.id}: ${error instanceof Error ? error.message : 'Unknown error'}`
         );
-        if (this.debug) {
-          console.error('Response status:', response.status);
-          console.error('Response text:', errorText);
-        }
-        throw error;
       }
-
-      return response.json() as Promise<ConfluenceResponse>;
-    } catch (error) {
-      if (this.debug && !(error instanceof Error)) {
-        console.error('Unexpected error:', error);
-      }
-      throw error;
     }
+
+    this.log(
+      `WARNING: Found cloud pages with title "${title}" but none with parentId "${parentId}".`
+    );
+    return results[0];
   }
 
   async getPageByTitle(
@@ -497,153 +543,11 @@ export class ConfluenceClient {
     title: string,
     parentId?: string
   ): Promise<ConfluenceResponse | null> {
-    let endpoint: string;
-    let params: URLSearchParams;
-
-    if (this.instanceType === 'server') {
-      // Server/Data Center API endpoint
-      endpoint = this.buildApiEndpoint('/content');
-      params = new URLSearchParams({
-        title,
-        spaceKey,
-        expand: 'version,space,body.storage',
-        status: 'current',
-      });
-
-      // For Server/Data Center, we need to fetch and then filter results
-    } else {
-      // First, get space ID from space key
-      const space = await this.getSpaceByKey(spaceKey);
-      if (!space) {
-        throw new Error(`Space with key "${spaceKey}" not found`);
-      }
-
-      this.log(`Found space: ${space.name} (ID: ${space.id})`);
-
-      // Use the space ID to search for pages
-      endpoint = this.buildApiEndpoint('/api/v2/pages');
-      params = new URLSearchParams({
-        title,
-        status: 'current',
-        limit: '100', // Increase limit to find pages with same title
-        spaceId: space.id,
-      });
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    if (effectiveInstanceType === 'server') {
+      return this._getPageByTitleServer(spaceKey, title, parentId);
     }
-
-    this.log(`Searching for page at: ${endpoint}?${params}`);
-
-    try {
-      const response = await fetch(`${endpoint}?${params}`, {
-        headers: this.getAuthHeaders(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData: unknown;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          errorData = { message: errorText };
-        }
-
-        const error = new Error(
-          `Failed to search pages: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
-        );
-        if (this.debug) {
-          console.error('Response status:', response.status);
-          console.error('Response text:', errorText);
-          console.error('Request URL:', `${endpoint}?${params}`);
-        }
-        throw error;
-      }
-
-      let results: ConfluenceResponse[];
-      if (this.instanceType === 'server') {
-        // Server/Data Center response format
-        const data = await response.json();
-        results = data.results || [];
-      } else {
-        // Cloud response format
-        const data = (await response.json()) as ConfluenceSearchResponse;
-        results = data.results || [];
-      }
-
-      if (!results || results.length === 0) {
-        // No pages found with this title
-        return null;
-      }
-
-      // If we have results but no parentId is specified, just return the first match
-      if (!parentId) {
-        this.log(`Found page with title "${title}" (no parent specified)`);
-        return results[0];
-      }
-
-      // If parentId is provided, we need to check each result for matching parentId
-      this.log(
-        `Found ${results.length} pages with title "${title}", checking for parentId "${parentId}"`
-      );
-
-      // First try checking if any of the returned results already have parentId property
-      const pageWithParent = results.find((page: ConfluenceResponse) => {
-        if (this.instanceType === 'server') {
-          // For Server/Data Center, check ancestors
-          return page.ancestors?.some((ancestor) => ancestor.id === parentId);
-        }
-        // For Cloud API
-        return page.parentId === parentId;
-      });
-
-      if (pageWithParent) {
-        this.log('Found page with matching parentId directly in results');
-        return pageWithParent;
-      }
-
-      // We need to fetch full details for each page to check parentId
-      for (const page of results) {
-        try {
-          const pageDetails = await this.getPage(page.id);
-          // Check if the page has the specified parentId
-          if (this.instanceType === 'server') {
-            // For Server/Data Center, check ancestors
-            if (
-              pageDetails.ancestors?.some((ancestor: { id: string }) => ancestor.id === parentId)
-            ) {
-              this.log(`Found page with matching parentId in ancestors: ${pageDetails.id}`);
-              return page;
-            }
-          } else {
-            // For Cloud API
-            if (pageDetails && 'parentId' in pageDetails && pageDetails.parentId === parentId) {
-              this.log(`Found page with matching parentId: ${pageDetails.id}`);
-              return page;
-            }
-          }
-        } catch (error) {
-          this.log(
-            `Error getting details for page ${page.id}: ${error instanceof Error ? error.message : 'Unknown error'}`
-          );
-        }
-      }
-
-      // If we're looking for a specific parent but none match, we should handle this specially
-      // Return the first page with the matching title but log a warning
-      if (results.length > 0) {
-        this.log(`WARNING: Found pages with title "${title}" but none with parentId "${parentId}"`);
-        this.log(
-          'Returning first matching page, but Confluence may reject creation due to title conflict'
-        );
-        return results[0];
-      }
-
-      // No pages found that match both title and parentId
-      return null;
-    } catch (error) {
-      if (this.debug && !(error instanceof Error)) {
-        console.error('Unexpected error:', error);
-      }
-      throw error;
-    }
+    return this._getPageByTitleCloud(spaceKey, title, parentId);
   }
 
   /**
@@ -731,225 +635,115 @@ export class ConfluenceClient {
     }
   }
 
-  async addLabelsToPage(pageId: string, labels: string[]): Promise<unknown> {
-    try {
-      let endpoint: string;
-      let method: string;
-      let body: { prefix: string; name: string }[];
+  private async _addLabelsToServerPage(pageId: string, labels: string[]): Promise<unknown> {
+    const endpoint = this.buildApiEndpoint(`/content/${pageId}/label`);
+    const body = labels.map((label) => ({ prefix: 'global', name: label }));
+    this.log(`Adding labels to server page at: ${endpoint}`);
+    return this._fetchJson(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
 
-      if (this.instanceType === 'server') {
-        // Server/Data Center API endpoint
-        endpoint = this.buildApiEndpoint(`/content/${pageId}/label`);
-        method = 'POST';
-        // Format labels for Server/Data Center
-        body = labels.map((label) => ({
-          prefix: 'global',
-          name: label,
-        }));
-      } else {
-        // Find content ID by querying for page by title, since we have the page details
-        // First get the page details
-        const pageEndpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
-        this.log(`Getting page details: ${pageEndpoint}`);
+  private async _addLabelsToCloudPage(pageId: string, labels: string[]): Promise<unknown> {
+    // Cloud logic for adding labels is more involved
+    // First get the page details (v2 API)
+    const pageDetails = await this._getPageCloud(pageId); // Using the new _getPageCloud helper
+    const pageTitle = pageDetails.title;
+    const spaceId = pageDetails.space?.id;
 
-        const pageResponse = await fetch(pageEndpoint, {
-          method: 'GET',
-          headers: this.getAuthHeaders(),
-        });
-
-        if (!pageResponse.ok) {
-          const errorText = await pageResponse.text();
-          throw new Error(`Failed to get page details: ${errorText}`);
-        }
-
-        const pageDetails = await pageResponse.json();
-        const pageTitle = pageDetails.title;
-        const spaceId = pageDetails.spaceId;
-
-        // Now search for the content ID using the v1 API with the title and space
-        const space = await this.getSpaceById(spaceId);
-        if (!space) {
-          throw new Error(`Could not find space with ID ${spaceId}`);
-        }
-
-        const spaceKey = space.key;
-
-        // Use content search by title
-        const contentEndpoint = this.buildApiEndpoint('/rest/api/content');
-        const params = new URLSearchParams({
-          title: pageTitle,
-          spaceKey: spaceKey,
-          expand: 'version',
-        });
-
-        this.log(`Searching for content: ${contentEndpoint}?${params}`);
-
-        const contentResponse = await fetch(`${contentEndpoint}?${params}`, {
-          method: 'GET',
-          headers: this.getAuthHeaders(),
-        });
-
-        if (!contentResponse.ok) {
-          const errorText = await contentResponse.text();
-          throw new Error(`Failed to search for content: ${errorText}`);
-        }
-
-        const contentResults = await contentResponse.json();
-
-        if (!contentResults.results || contentResults.results.length === 0) {
-          throw new Error(
-            `Could not find content with title "${pageTitle}" in space "${spaceKey}"`
-          );
-        }
-
-        const contentId = contentResults.results[0].id;
-        this.log(`Found content ID ${contentId} for page ${pageId}`);
-
-        // Now use v1 API to add labels
-        endpoint = this.buildApiEndpoint(`/rest/api/content/${contentId}/label`);
-        method = 'POST';
-        body = labels.map((label) => ({
-          prefix: 'global',
-          name: label,
-        }));
-      }
-
-      this.log(`Adding labels to content at: ${endpoint}`);
-
-      const response = await fetch(endpoint, {
-        method,
-        headers: this.getAuthHeaders({
-          'Content-Type': 'application/json',
-        }),
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData: unknown;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          errorData = { message: errorText };
-        }
-
-        const error = new Error(
-          `Failed to add labels: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
-        );
-        if (this.debug) {
-          console.error('Response status:', response.status);
-          console.error('Response text:', errorText);
-        }
-        throw error;
-      }
-
-      return response.json();
-    } catch (error) {
-      if (this.debug && !(error instanceof Error)) {
-        console.error('Unexpected error:', error);
-      }
-      throw error;
+    if (!spaceId) {
+      throw new Error(`Could not determine spaceId for page ${pageId} to add labels.`);
     }
+
+    // Now search for the content ID using the v1 API with the title and space (from pageDetails)
+    const space = await this.getSpaceById(spaceId); // getSpaceById will also be refactored
+    if (!space) {
+      throw new Error(`Could not find space with ID ${spaceId}`);
+    }
+    const spaceKeyVal = space.key;
+
+    const contentSearchEndpoint = this.buildApiEndpoint('/rest/api/content');
+    const params = new URLSearchParams({
+      title: pageTitle,
+      spaceKey: spaceKeyVal,
+      expand: 'version',
+    });
+    this.log(`Searching for cloud content (v1 API): ${contentSearchEndpoint}?${params}`);
+    const contentResults = await this._fetchJson(`${contentSearchEndpoint}?${params}`);
+
+    if (!contentResults.results || contentResults.results.length === 0) {
+      throw new Error(
+        `Could not find content with title "${pageTitle}" in space "${spaceKeyVal}" using v1 API.`
+      );
+    }
+    const contentId = contentResults.results[0].id;
+    this.log(`Found content ID ${contentId} for page ${pageId} (v1 API)`);
+
+    // Now use v1 API to add labels
+    const endpoint = this.buildApiEndpoint(`/rest/api/content/${contentId}/label`);
+    const body = labels.map((label) => ({ prefix: 'global', name: label }));
+    this.log(`Adding labels to cloud page (v1 API) at: ${endpoint}`);
+    return this._fetchJson(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async addLabelsToPage(pageId: string, labels: string[]): Promise<unknown> {
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    if (effectiveInstanceType === 'server') {
+      return this._addLabelsToServerPage(pageId, labels);
+    }
+    return this._addLabelsToCloudPage(pageId, labels);
+  }
+
+  private async _getSpaceByIdServer(spaceId: string): Promise<ConfluenceSpace | null> {
+    const endpoint = this.buildApiEndpoint('/space');
+    this.log(`Fetching server spaces to find ID ${spaceId} at: ${endpoint}`);
+    const result = await this._fetchJson(endpoint);
+    const spaces: ConfluenceSpace[] = result.results || [];
+    return spaces.find((s) => s.id.toString() === spaceId.toString()) || null;
+  }
+
+  private async _getSpaceByIdCloud(spaceId: string): Promise<ConfluenceSpace | null> {
+    const endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceId}`);
+    this.log(`Fetching cloud space information for ID ${spaceId} at: ${endpoint}`);
+    return this._fetchJson(endpoint) as Promise<ConfluenceSpace>;
   }
 
   // Helper method to get space by ID
   async getSpaceById(spaceId: string): Promise<ConfluenceSpace | null> {
-    let endpoint: string;
-
-    if (this.instanceType === 'server') {
-      // Server/Data Center - use v1 API and search for space by key
-      // We need to list all spaces and filter by ID
-      endpoint = this.buildApiEndpoint('/space');
-
-      this.log(`Fetching spaces to find ID ${spaceId} at: ${endpoint}`);
-
-      try {
-        const response = await fetch(endpoint, {
-          headers: this.getAuthHeaders(),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Failed to get spaces: ${errorText}`);
-        }
-
-        const result = await response.json();
-        const spaces = result.results || [];
-
-        // Find the space with the matching ID
-        const space = spaces.find((s: { id: string }) => s.id.toString() === spaceId.toString());
-        return space || null;
-      } catch (error) {
-        if (this.debug && !(error instanceof Error)) {
-          console.error('Unexpected error:', error);
-        }
-        throw error;
-      }
-    } else {
-      // Cloud API
-      endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceId}`);
-      this.log(`Fetching space information for ID ${spaceId} at: ${endpoint}`);
-
-      try {
-        const response = await fetch(endpoint, {
-          headers: this.getAuthHeaders(),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Failed to get space: ${errorText}`);
-        }
-
-        const result = await response.json();
-        return result as ConfluenceSpace;
-      } catch (error) {
-        if (this.debug && !(error instanceof Error)) {
-          console.error('Unexpected error:', error);
-        }
-        throw error;
-      }
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    if (effectiveInstanceType === 'server') {
+      return this._getSpaceByIdServer(spaceId);
     }
+    return this._getSpaceByIdCloud(spaceId);
   }
 
-  async uploadImage(
+  private async _uploadImageServer(
     spaceKey: string,
     filePath: string,
     comment?: string
   ): Promise<ImageUploadResponse> {
-    let endpoint: string;
-
-    if (this.instanceType === 'server') {
-      // For Server/Data Center, we need to get the space home page first
-      const space = await this.getSpaceByKey(spaceKey);
-      if (!space) {
-        throw new Error(`Space with key "${spaceKey}" not found`);
-      }
-
-      // Get the home page ID for the space
-      const homePageId = space.homepage ? space.homepage.id : space.homepageId;
-
-      if (!homePageId) {
-        throw new Error(`Could not find home page for space "${spaceKey}"`);
-      }
-
-      endpoint = this.buildApiEndpoint(`/content/${homePageId}/child/attachment`);
-    } else {
-      // Cloud API endpoint
-      endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceKey}/attachments`);
+    const space = await this.getSpaceByKey(spaceKey);
+    if (!space) {
+      throw new Error(`Space with key "${spaceKey}" not found for Server image upload.`);
     }
-
-    this.log(`Uploading image to: ${endpoint}`);
+    const homePageId = space.homepage ? space.homepage.id : space.homepageId;
+    if (!homePageId) {
+      throw new Error(`Could not find home page for space "${spaceKey}" for Server image upload.`);
+    }
+    const endpoint = this.buildApiEndpoint(`/content/${homePageId}/child/attachment`);
 
     const form = new FormData();
-
-    // Add the file to form data
     try {
       form.append('file', createReadStream(filePath));
     } catch (error) {
-      // Handle file not found error gracefully in tests
       if (process.env.NODE_ENV === 'test') {
         this.log(`Test environment: Simulating file upload for ${filePath}`);
-        // In test environment, we'll just continue without the actual file
       } else {
         throw error;
       }
@@ -957,45 +751,53 @@ export class ConfluenceClient {
     form.append('comment', comment || 'Uploaded via md2confluence');
     form.append('minorEdit', 'true');
 
+    this.log(`Uploading server image to: ${endpoint}`);
+    return this._fetchJson(endpoint, {
+      method: 'POST',
+      headers: form.getHeaders(), // form-data library provides getHeaders()
+      body: form as any, // Type assertion for fetch compatibility
+    });
+  }
+
+  private async _uploadImageCloud(
+    spaceKey: string,
+    filePath: string,
+    comment?: string
+  ): Promise<ImageUploadResponse> {
+    const endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceKey}/attachments`);
+
+    const form = new FormData();
     try {
-      // Get form headers
-      const formHeaders = form.getHeaders();
-
-      // With Node.js native fetch, we need to use form-data compatible approach
-      // by passing the form as a readable stream with the right headers
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: this.getAuthHeaders(formHeaders),
-        // @ts-ignore - FormData from form-data is compatible with fetch but TypeScript doesn't know
-        body: form,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData: unknown;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          errorData = { message: errorText };
-        }
-
-        const error = new Error(
-          `Failed to upload image: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
-        );
-        if (this.debug) {
-          console.error('Response status:', response.status);
-          console.error('Response text:', errorText);
-        }
+      form.append('file', createReadStream(filePath));
+    } catch (error) {
+      if (process.env.NODE_ENV === 'test') {
+        this.log(`Test environment: Simulating file upload for ${filePath}`);
+      } else {
         throw error;
       }
-
-      return response.json() as Promise<ImageUploadResponse>;
-    } catch (error) {
-      if (this.debug && !(error instanceof Error)) {
-        console.error('Unexpected error:', error);
-      }
-      throw error;
     }
+    form.append('comment', comment || 'Uploaded via md2confluence');
+    // Cloud might not support minorEdit in the same way or at all for attachments via v2
+    // form.append('minorEdit', 'true');
+
+    this.log(`Uploading cloud image to: ${endpoint}`);
+    return this._fetchJson(endpoint, {
+      method: 'POST',
+      headers: form.getHeaders(),
+      body: form as any,
+    });
+  }
+
+  async uploadImage(
+    spaceKey: string,
+    filePath: string,
+    comment?: string
+  ): Promise<ImageUploadResponse> {
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    if (effectiveInstanceType === 'server') {
+      return this._uploadImageServer(spaceKey, filePath, comment);
+    }
+    return this._uploadImageCloud(spaceKey, filePath, comment);
   }
 
   /**
