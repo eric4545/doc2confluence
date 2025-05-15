@@ -1,13 +1,13 @@
 import { ConfluenceClient } from '../confluence';
-import fetch from 'node-fetch';
+// We'll use global fetch
+import FormData from 'form-data';
 
-// Mock node-fetch
-jest.mock('node-fetch');
-const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+// Mock global fetch instead of node-fetch
+const mockFetch = jest.fn();
+global.fetch = mockFetch;
 
 // Mock FormData
 jest.mock('form-data');
-import FormData from 'form-data';
 
 // Mock fs for createReadStream
 jest.mock('fs', () => ({
@@ -26,7 +26,7 @@ describe('ConfluenceClient', () => {
       json: jest.fn().mockResolvedValue({ results: [] }),
       text: jest.fn().mockResolvedValue(''),
     };
-    mockFetch.mockResolvedValue(mockResponse as any);
+    mockFetch.mockResolvedValue(mockResponse);
   });
 
   describe('Authentication', () => {
@@ -285,10 +285,10 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: jest.fn().mockResolvedValue(uploadResponse),
-      } as any);
+      });
 
       // Mock FormData getHeaders
-      (FormData.prototype.getHeaders as jest.Mock).mockReturnValue({
+      FormData.prototype.getHeaders = jest.fn().mockReturnValue({
         'Content-Type': 'multipart/form-data; boundary=boundary',
       });
 

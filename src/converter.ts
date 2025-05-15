@@ -3,7 +3,6 @@ import { createReadStream } from 'fs';
 import FormData from 'form-data';
 import path from 'path';
 import fs from 'fs/promises';
-import fetch from 'node-fetch';
 import Ajv from 'ajv';
 import { ConfluenceClient } from './confluence';
 import { parse as parseCsv } from 'csv-parse';
