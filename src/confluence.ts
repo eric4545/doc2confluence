@@ -54,14 +54,58 @@ export class ConfluenceClient {
   private baseUrl: string;
   private email: string;
   private apiToken: string;
+  private personalAccessToken: string | null;
   private debug: boolean;
+  private authType: 'basic' | 'pat';
 
-  constructor(baseUrl: string, email: string, apiToken: string, debug = false) {
+  constructor(
+    baseUrl: string,
+    auth: {
+      // Either provide email + apiToken for Basic auth
+      email?: string;
+      apiToken?: string;
+      // Or provide a personal access token for PAT auth
+      personalAccessToken?: string;
+    },
+    debug = false
+  ) {
     // Remove trailing slashes to avoid path issues
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.email = email;
-    this.apiToken = apiToken;
+
+    // Determine auth type and validate required fields
+    if (auth.personalAccessToken) {
+      this.authType = 'pat';
+      this.personalAccessToken = auth.personalAccessToken;
+      this.email = '';
+      this.apiToken = '';
+    } else if (auth.email && auth.apiToken) {
+      this.authType = 'basic';
+      this.email = auth.email;
+      this.apiToken = auth.apiToken;
+      this.personalAccessToken = null;
+    } else {
+      throw new Error('Authentication requires either email+apiToken or personalAccessToken');
+    }
+
     this.debug = debug;
+  }
+
+  // DRY method for auth headers
+  private getAuthHeaders(additionalHeaders = {}): Record<string, string> {
+    let authHeader;
+
+    if (this.authType === 'pat') {
+      authHeader = `Bearer ${this.personalAccessToken}`;
+    } else {
+      // Basic auth with email and API token
+      authHeader = `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`;
+    }
+
+    return {
+      'Authorization': authHeader,
+      'Accept': 'application/json',
+      ...additionalHeaders
+    };
   }
 
   private log(...args: any[]) {
@@ -91,10 +135,7 @@ export class ConfluenceClient {
 
     try {
       const response = await fetch(`${endpoint}?${params}`, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -161,11 +202,9 @@ export class ConfluenceClient {
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
+        headers: this.getAuthHeaders({
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        }),
         body: JSON.stringify(body),
       });
 
@@ -187,7 +226,7 @@ export class ConfluenceClient {
             endpoint,
             method: 'POST',
             headers: {
-              'Authorization': 'Basic **REDACTED**',
+              'Authorization': '**REDACTED**',
               'Content-Type': 'application/json',
               'Accept': 'application/json',
             },
@@ -234,11 +273,7 @@ export class ConfluenceClient {
 
       const response = await fetch(endpoint, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(body),
       });
 
@@ -259,7 +294,7 @@ export class ConfluenceClient {
             endpoint,
             method: 'PUT',
             headers: {
-              'Authorization': 'Basic **REDACTED**',
+              'Authorization': '**REDACTED**',
               'Content-Type': 'application/json',
               'Accept': 'application/json',
             },
@@ -284,10 +319,7 @@ export class ConfluenceClient {
 
     try {
       const response = await fetch(endpoint, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -338,10 +370,7 @@ export class ConfluenceClient {
 
     try {
       const response = await fetch(`${endpoint}?${params}`, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -463,10 +492,7 @@ export class ConfluenceClient {
 
       const pageResponse = await fetch(pageEndpoint, {
         method: 'GET',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!pageResponse.ok) {
@@ -498,10 +524,7 @@ export class ConfluenceClient {
 
       const contentResponse = await fetch(`${contentEndpoint}?${params}`, {
         method: 'GET',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!contentResponse.ok) {
@@ -529,11 +552,7 @@ export class ConfluenceClient {
 
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(body),
       });
 
@@ -570,10 +589,7 @@ export class ConfluenceClient {
 
     try {
       const response = await fetch(endpoint, {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          'Accept': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -608,10 +624,7 @@ export class ConfluenceClient {
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
-          ...form.getHeaders(),
-        },
+        headers: this.getAuthHeaders(form.getHeaders()),
         body: form,
       });
 

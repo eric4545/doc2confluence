@@ -181,7 +181,16 @@ program
         console.log(`DEBUG: Base URL: ${config.url}`);
       }
 
-      const client = new ConfluenceClient(config.url, config.username, config.apiKey, isDebugMode);
+      const client = new ConfluenceClient(
+        config.url,
+        {
+          // Prefer email over username if available
+          email: config.email || config.username,
+          apiToken: config.apiKey,
+          personalAccessToken: config.personalAccessToken
+        },
+        isDebugMode
+      );
 
       // Extract title from metadata, command line option, first heading, or filename
       let pageTitle = metadata.title;

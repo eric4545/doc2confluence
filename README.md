@@ -387,13 +387,27 @@ CSV files are converted to Confluence tables with:
 
 Create a `.env` file in your project root:
 
+### Option 1: Basic Authentication (Email/Username + API Token)
 ```env
 CONFLUENCE_URL=https://your-domain.atlassian.net
+# You can use either CONFLUENCE_EMAIL or CONFLUENCE_USERNAME
 CONFLUENCE_EMAIL=your-email@domain.com
+# You can use either CONFLUENCE_API_TOKEN or CONFLUENCE_API_KEY
 CONFLUENCE_API_TOKEN=your-api-token
 CONFLUENCE_SPACE=your-space-key
 CONFLUENCE_PARENT_ID=your-parent-page-id
 ```
+
+### Option 2: Personal Access Token Authentication
+```env
+CONFLUENCE_URL=https://your-domain.atlassian.net
+# You can use either CONFLUENCE_PAT or CONFLUENCE_PERSONAL_ACCESS_TOKEN
+CONFLUENCE_PAT=your-personal-access-token
+CONFLUENCE_SPACE=your-space-key
+CONFLUENCE_PARENT_ID=your-parent-page-id
+```
+
+For more information on creating Personal Access Tokens in Atlassian, see their [official documentation](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html).
 
 ## Contributing
 
