@@ -883,15 +883,18 @@ export class ConfluenceClient {
           break;
         case 'codeBlock': {
           const language = (node.attrs as { language?: string })?.language || '';
+          const codeContent = this.processADFNodes(node.content || []); // Get the raw code content
+
           if (language === 'mermaid') {
-            result += '<ac:structured-macro ac:name="mermaid">';
-            result += `<ac:plain-text-body><![CDATA[${this.processADFNodes(node.content || [])}]]></ac:plain-text-body></ac:structured-macro>`;
+            // Wrap Mermaid code in a Markdown macro with Markdown code fences
+            result += '<ac:structured-macro ac:name="markdown">';
+            result += `<ac:plain-text-body><![CDATA[\`\`\`mermaid\\n${codeContent}\\n\`\`\`]]></ac:plain-text-body></ac:structured-macro>`;
           } else {
             result += '<ac:structured-macro ac:name="code">';
             if (language) {
               result += `<ac:parameter ac:name="language">${language}</ac:parameter>`;
             }
-            result += `<ac:plain-text-body><![CDATA[${this.processADFNodes(node.content || [])}]]></ac:plain-text-body></ac:structured-macro>`;
+            result += `<ac:plain-text-body><![CDATA[${codeContent}]]></ac:plain-text-body></ac:structured-macro>`;
           }
           break;
         }

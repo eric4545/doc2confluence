@@ -431,8 +431,14 @@ describe('ConfluenceClient', () => {
       // Access the private method for testing via a type assertion
       const convertADFToStorage = (client as any).convertADFToStorage.bind(client);
       const expectedOutput =
-        '<ac:structured-macro ac:name="mermaid"><ac:plain-text-body><![CDATA[graph TD;\nA-->B;]]></ac:plain-text-body></ac:structured-macro>';
-      expect(convertADFToStorage(adfInput)).toBe(expectedOutput);
+        '<ac:structured-macro ac:name="markdown">\
+          <ac:plain-text-body><![CDATA[```mermaid\n\
+graph TD;\nA-->B;\n\
+```]]></ac:plain-text-body>\
+        </ac:structured-macro>';
+      // Normalize whitespace for comparison to avoid issues with indentation/newlines in expected string
+      const normalize = (str: string) => str.replace(/\s+/g, ' ').trim();
+      expect(normalize(convertADFToStorage(adfInput))).toBe(normalize(expectedOutput));
     });
 
     test('should convert standard ADF codeBlock to code macro', () => {
@@ -457,6 +463,28 @@ describe('ConfluenceClient', () => {
       const convertADFToStorage = (client as any).convertADFToStorage.bind(client);
       const expectedOutput =
         '<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">javascript</ac:parameter><ac:plain-text-body><![CDATA[console.log("Hello");]]></ac:plain-text-body></ac:structured-macro>';
+      expect(convertADFToStorage(adfInput)).toBe(expectedOutput);
+    });
+
+    test('should convert ADF text with strong mark to <strong> tag', () => {
+      const adfInput = {
+        type: 'doc',
+        version: 1,
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: 'This is bold text',
+                marks: [{ type: 'strong' }],
+              },
+            ],
+          },
+        ],
+      };
+      const convertADFToStorage = (client as any).convertADFToStorage.bind(client);
+      const expectedOutput = '<p><strong>This is bold text</strong></p>';
       expect(convertADFToStorage(adfInput)).toBe(expectedOutput);
     });
 
