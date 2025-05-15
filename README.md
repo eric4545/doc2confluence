@@ -1,5 +1,7 @@
 # doc2confluence
 
+[![CI](https://github.com/eric4545/doc2confluence/actions/workflows/ci.yml/badge.svg)](https://github.com/eric4545/doc2confluence/actions/workflows/ci.yml)
+
 A powerful command-line tool that converts documentation files (Markdown, AsciiDoc, CSV) to Confluence's Atlassian Document Format (ADF).
 
 ## Installation
