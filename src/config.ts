@@ -4,6 +4,9 @@ import path from 'path';
 // Load environment variables from .env file
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
+// Define the Confluence instance types
+export type ConfluenceInstanceType = 'cloud' | 'server';
+
 export interface ConfluenceConfig {
   url: string;
   // Support both authentication methods
@@ -13,6 +16,7 @@ export interface ConfluenceConfig {
   personalAccessToken?: string; // New PAT auth method
   defaultSpace?: string;
   defaultParentId?: string;
+  instanceType: ConfluenceInstanceType; // Added for server/data center support
 }
 
 export function getConfluenceConfig(): ConfluenceConfig {
@@ -25,7 +29,14 @@ export function getConfluenceConfig(): ConfluenceConfig {
     personalAccessToken: process.env.CONFLUENCE_PAT || process.env.CONFLUENCE_PERSONAL_ACCESS_TOKEN || '',
     defaultSpace: process.env.CONFLUENCE_SPACE,
     defaultParentId: process.env.CONFLUENCE_PARENT_ID,
+    instanceType: (process.env.CONFLUENCE_INSTANCE_TYPE as ConfluenceInstanceType) || 'cloud',
   };
+
+  // Validate the instance type
+  if (config.instanceType !== 'cloud' && config.instanceType !== 'server') {
+    console.warn(`Invalid CONFLUENCE_INSTANCE_TYPE: ${config.instanceType}. Using default 'cloud'.`);
+    config.instanceType = 'cloud';
+  }
 
   // Validate required fields
   const missingFields: string[] = [];
@@ -48,12 +59,11 @@ export function getConfluenceConfig(): ConfluenceConfig {
   }
 
   // Ensure URL has correct format for API calls
-  // The Confluence API endpoints start with /api/v2/...
   // Remove trailing slashes first to prevent double slashes
   config.url = config.url.replace(/\/+$/, '');
 
-  // Add /wiki only if not already present to prevent /wiki/wiki issues
-  if (!config.url.endsWith('/wiki')) {
+  // For Cloud, add /wiki if not already present to prevent /wiki/wiki issues
+  if (config.instanceType === 'cloud' && !config.url.endsWith('/wiki')) {
     config.url = `${config.url}/wiki`;
   }
 

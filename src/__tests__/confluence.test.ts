@@ -43,7 +43,8 @@ describe('ConfluenceClient', () => {
           email: 'test@example.com',
           apiToken: 'test-token',
         },
-        false
+        false,
+        'cloud'
       );
 
       // We can't test private properties directly, but we can test behavior
@@ -62,7 +63,8 @@ describe('ConfluenceClient', () => {
         {
           personalAccessToken: 'test-pat',
         },
-        false
+        false,
+        'cloud'
       );
 
       expect(() => client.getSpaceByKey('TEST')).not.toThrow();
@@ -73,7 +75,8 @@ describe('ConfluenceClient', () => {
         new ConfluenceClient(
           'https://example.atlassian.net',
           { /* No auth provided */ },
-          false
+          false,
+          'cloud'
         )
       ).toThrow('Authentication requires either email+apiToken or personalAccessToken');
     });
@@ -89,7 +92,8 @@ describe('ConfluenceClient', () => {
         {
           personalAccessToken: 'test-pat',
         },
-        false
+        false,
+        'cloud'
       );
 
       await client.getSpaceByKey('TEST');
@@ -113,7 +117,8 @@ describe('ConfluenceClient', () => {
           email: 'test@example.com',
           apiToken: 'test-token',
         },
-        false
+        false,
+        'cloud'
       );
 
       await client.getSpaceByKey('TEST');
@@ -124,6 +129,56 @@ describe('ConfluenceClient', () => {
       expect(url).toContain('/api/v2/spaces');
       const expectedAuthHeader = `Basic ${Buffer.from('test@example.com:test-token').toString('base64')}`;
       expect(options?.headers).toHaveProperty('Authorization', expectedAuthHeader);
+    });
+  });
+
+  describe('Instance Type Configuration', () => {
+    test('should use cloud API endpoints by default', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ results: [] }),
+      } as any);
+
+      const client = new ConfluenceClient(
+        'https://example.atlassian.net',
+        {
+          email: 'test@example.com',
+          apiToken: 'test-token',
+        },
+        false,
+        'cloud'
+      );
+
+      await client.getSpaceByKey('TEST');
+
+      // Verify cloud API endpoint is used
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).toContain('/api/v2/spaces');
+    });
+
+    test('should use server API endpoints when instanceType is server', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ key: 'TEST' }),
+      } as any);
+
+      const client = new ConfluenceClient(
+        'https://example-server.com',
+        {
+          email: 'test@example.com',
+          apiToken: 'test-token',
+        },
+        false,
+        'server'
+      );
+
+      await client.getSpaceByKey('TEST');
+
+      // Verify server API endpoint is used
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).toContain('/space/TEST');
     });
   });
 
@@ -138,7 +193,8 @@ describe('ConfluenceClient', () => {
           email: 'test@example.com',
           apiToken: 'test-token',
         },
-        false
+        false,
+        'cloud'
       );
     });
 
