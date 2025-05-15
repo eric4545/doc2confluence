@@ -7,6 +7,7 @@ import { Converter } from './converter';
 import { ConfluenceClient } from './confluence';
 import { getConfluenceConfig, validateSpaceKey, getParentPageId } from './config';
 import { convertFile, InputFormat } from './formats';
+import { parseMarkdownFile } from './metadata';
 
 const program = new Command();
 
@@ -110,10 +111,24 @@ program
         });
       }
 
-      const spaceKey = validateSpaceKey(options.space || config.defaultSpace);
-      const parentId = await getParentPageId(options.parent || config.defaultParentId);
+      type PushMetadata = {
+        space?: string;
+        parentId?: string;
+        title?: string;
+        pageId?: string;
+        labels: string[];
+      };
+
+      let metadata: PushMetadata = {
+        space: undefined,
+        parentId: undefined,
+        title: options.title,
+        pageId: undefined,
+        labels: []
+      };
 
       let adf;
+
       if (file.endsWith('.adf.json')) {
         // If file is already ADF JSON, just read it
         if (isDebugMode) {
@@ -127,15 +142,39 @@ program
           console.log('DEBUG: Converting file to ADF');
         }
         const format = options.format as InputFormat;
+
+        // If markdown format, check for front matter before conversion
+        if (format === 'markdown' && !file.endsWith('.adf.json')) {
+          const fileContent = await fs.readFile(file, 'utf-8');
+          const { metadata: frontMatterMetadata } = parseMarkdownFile(fileContent);
+
+          // Update metadata from front matter
+          if (frontMatterMetadata) {
+            if (isDebugMode) {
+              console.log('DEBUG: Found front matter metadata:', frontMatterMetadata);
+            }
+
+            // Only use front matter values if command line options are not provided
+            metadata.space = options.space || frontMatterMetadata.space;
+            metadata.parentId = options.parent || frontMatterMetadata.parentId;
+            metadata.title = options.title || frontMatterMetadata.title;
+            metadata.pageId = frontMatterMetadata.pageId; // No command line option for pageId
+            metadata.labels = frontMatterMetadata.labels || [];
+          }
+        }
+
+        // Convert with metadata handling
         adf = await convertFile(file, format, {
           generateToc: options.toc,
           parseInlineCards: options.inlineCards,
           uploadImages: options.uploadImages,
           useOfficialSchema: options.useOfficialSchema,
-          spaceKey,
-          parentId,
         });
       }
+
+      // Validate space key and parent ID, potentially using metadata values
+      const spaceKey = validateSpaceKey(options.space || metadata.space || config.defaultSpace);
+      const parentId = await getParentPageId(options.parent || metadata.parentId || config.defaultParentId);
 
       if (isDebugMode) {
         console.log('DEBUG: Creating Confluence client');
@@ -144,8 +183,12 @@ program
 
       const client = new ConfluenceClient(config.url, config.username, config.apiKey, isDebugMode);
 
-      // Extract title from first heading if available and not explicitly set
-      let pageTitle = options.title;
+      // Extract title from metadata, command line option, first heading, or filename
+      let pageTitle = metadata.title;
+      if (isDebugMode && pageTitle) {
+        console.log(`DEBUG: Using title from metadata: "${pageTitle}"`);
+      }
+
       if (!pageTitle && adf && adf.content) {
         // Look for the first heading in the ADF content
         const firstHeading = adf.content.find(
@@ -180,11 +223,16 @@ program
         console.log(`DEBUG: Pushing to Confluence. SpaceKey: ${spaceKey}, Title: ${pageTitle}`);
       }
 
+      // Use pageId from metadata if available
+      const pageIdParam = metadata.pageId || undefined;
+
       const pageId = await client.createOrUpdatePage(
         spaceKey,
         pageTitle,
         adf,
-        parentId
+        parentId,
+        pageIdParam,
+        metadata.labels
       );
 
       if (isDebugMode) {

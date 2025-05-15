@@ -316,7 +316,7 @@ export class ConfluenceClient {
     }
   }
 
-  async getPageByTitle(spaceKey: string, title: string): Promise<ConfluenceResponse | null> {
+  async getPageByTitle(spaceKey: string, title: string, parentId?: string): Promise<ConfluenceResponse | null> {
     // First, get space ID from space key
     const space = await this.getSpaceByKey(spaceKey);
     if (!space) {
@@ -330,7 +330,7 @@ export class ConfluenceClient {
     const params = new URLSearchParams({
       title,
       status: 'current',
-      limit: '1',
+      limit: '100', // Increase limit to find pages with same title
       spaceId: space.id
     });
 
@@ -363,6 +363,26 @@ export class ConfluenceClient {
       }
 
       const results = await response.json() as ConfluenceSearchResponse;
+
+      // If parent ID is provided, filter results to match the parent
+      if (parentId && results.results && results.results.length > 0) {
+        // Find a page with matching parent ID
+        for (const page of results.results) {
+          // If we need full page details to check parentId
+          try {
+            const pageDetails = await this.getPage(page.id);
+            if (pageDetails && 'parentId' in pageDetails && pageDetails.parentId === parentId) {
+              return page;
+            }
+          } catch (error) {
+            this.log(`Error getting details for page ${page.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        }
+        // If we searched all pages and none match the parent, return null
+        return null;
+      }
+
+      // If no parent ID specified or no results, return the first match
       return results.results[0] || null;
     } catch (error) {
       if (this.debug && !(error instanceof Error)) {
@@ -379,26 +399,193 @@ export class ConfluenceClient {
     spaceKey: string,
     title: string,
     content: ADFEntity,
-    parentId?: string
+    parentId?: string,
+    pageId?: string,
+    labels?: string[]
   ): Promise<any> {
     this.log(`Creating or updating page "${title}" in space "${spaceKey}"`);
 
     try {
-      // Try to find existing page
-      const existingPage = await this.getPageByTitle(spaceKey, title);
+      let existingPage = null;
 
+      // If pageId is provided, try to get the page directly
+      if (pageId) {
+        try {
+          existingPage = await this.getPage(pageId);
+          this.log(`Found page by ID ${pageId}`);
+        } catch (error) {
+          this.log(`Could not find page with ID ${pageId}, will search by title`);
+        }
+      }
+
+      // If no page found by ID, try to find by title AND parentId
+      if (!existingPage) {
+        this.log(`Searching for page by title "${title}" and parentId "${parentId || 'none'}"`);
+        existingPage = await this.getPageByTitle(spaceKey, title, parentId);
+      }
+
+      let result;
       if (existingPage) {
         // Update existing page
         this.log(`Page "${title}" exists with ID ${existingPage.id}, updating...`);
         const currentVersion = existingPage.version?.number || 1;
-        return this.updatePage(existingPage.id, title, content, currentVersion + 1);
+        result = await this.updatePage(existingPage.id, title, content, currentVersion + 1);
       } else {
         // Create new page
         this.log(`Page "${title}" does not exist, creating new page...`);
-        return this.createPage(spaceKey, title, content, parentId);
+        result = await this.createPage(spaceKey, title, content, parentId);
       }
+
+      // Handle labels if provided
+      if (labels && labels.length > 0 && result.id) {
+        this.log(`Adding ${labels.length} labels to page ${result.id}`);
+        try {
+          await this.addLabelsToPage(result.id, labels);
+        } catch (error) {
+          this.log(`Error adding labels: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          // Don't fail the entire operation if just labels fail
+        }
+      }
+
+      return result;
     } catch (error) {
       this.log(`Error in createOrUpdatePage: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
+    }
+  }
+
+  async addLabelsToPage(pageId: string, labels: string[]): Promise<any> {
+    try {
+      // Find content ID by querying for page by title, since we have the page details
+      // First get the page details
+      const pageEndpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
+      this.log(`Getting page details: ${pageEndpoint}`);
+
+      const pageResponse = await fetch(pageEndpoint, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!pageResponse.ok) {
+        const errorText = await pageResponse.text();
+        throw new Error(`Failed to get page details: ${errorText}`);
+      }
+
+      const pageDetails = await pageResponse.json();
+      const pageTitle = pageDetails.title;
+      const spaceId = pageDetails.spaceId;
+
+      // Now search for the content ID using the v1 API with the title and space
+      const space = await this.getSpaceById(spaceId);
+      if (!space) {
+        throw new Error(`Could not find space with ID ${spaceId}`);
+      }
+
+      const spaceKey = space.key;
+
+      // Use content search by title
+      const contentEndpoint = this.buildApiEndpoint(`/rest/api/content`);
+      const params = new URLSearchParams({
+        title: pageTitle,
+        spaceKey: spaceKey,
+        expand: 'version'
+      });
+
+      this.log(`Searching for content: ${contentEndpoint}?${params}`);
+
+      const contentResponse = await fetch(`${contentEndpoint}?${params}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!contentResponse.ok) {
+        const errorText = await contentResponse.text();
+        throw new Error(`Failed to search for content: ${errorText}`);
+      }
+
+      const contentResults = await contentResponse.json();
+
+      if (!contentResults.results || contentResults.results.length === 0) {
+        throw new Error(`Could not find content with title "${pageTitle}" in space "${spaceKey}"`);
+      }
+
+      const contentId = contentResults.results[0].id;
+      this.log(`Found content ID ${contentId} for page ${pageId}`);
+
+      // Now use v1 API to add labels
+      const endpoint = this.buildApiEndpoint(`/rest/api/content/${contentId}/label`);
+      this.log(`Adding labels to content at: ${endpoint}`);
+
+      const body = labels.map(label => ({
+        prefix: "global",
+        name: label
+      }));
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (e) {
+          errorData = { message: errorText };
+        }
+
+        const error = new Error(`Failed to add labels: ${errorData.message || response.statusText}`);
+        if (this.debug) {
+          console.error('Response status:', response.status);
+          console.error('Response text:', errorText);
+        }
+        throw error;
+      }
+
+      return response.json();
+    } catch (error) {
+      if (this.debug && !(error instanceof Error)) {
+        console.error('Unexpected error:', error);
+      }
+      throw error;
+    }
+  }
+
+  // Helper method to get space by ID
+  async getSpaceById(spaceId: string): Promise<ConfluenceSpace | null> {
+    const endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceId}`);
+    this.log(`Fetching space information for ID ${spaceId} at: ${endpoint}`);
+
+    try {
+      const response = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${this.email}:${this.apiToken}`).toString('base64')}`,
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to get space by ID: ${errorText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      if (this.debug && !(error instanceof Error)) {
+        console.error('Unexpected error:', error);
+      }
       throw error;
     }
   }

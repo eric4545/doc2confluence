@@ -2,6 +2,7 @@ import { Converter } from '../converter';
 import { parse as parseCsv } from 'csv-parse';
 import asciidoctor from 'asciidoctor';
 import fs from 'fs/promises';
+import { parseMarkdownFile, validateMetadata } from '../metadata';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
@@ -157,7 +158,20 @@ export class MarkdownConverter implements FormatConverter {
   }
 
   async convert(content: string, options: any): Promise<ADFEntity> {
-    return this.converter.convertToADF(content, options);
+    // Parse front matter metadata
+    const { content: mdContent, metadata } = parseMarkdownFile(content);
+
+    // Merge metadata with options
+    const mergedOptions = {
+      ...options,
+      spaceKey: metadata.space || options.spaceKey,
+      parentId: metadata.parentId || options.parentId,
+      title: metadata.title || options.title,
+      pageId: metadata.pageId || options.pageId,
+      labels: metadata.labels || options.labels || [],
+    };
+
+    return this.converter.convertToADF(mdContent, mergedOptions);
   }
 }
 

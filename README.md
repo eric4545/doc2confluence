@@ -111,6 +111,22 @@ Revenue|$50K|+25%
 ![Monthly Data](data/monthly-stats.csv)
 ```
 
+6. **Using YAML Front Matter for Metadata**:
+```markdown
+---
+title: "Team Documentation"
+space: "TEAM"
+parentId: "123456"
+labels:
+  - documentation
+  - team
+---
+
+# Team Documentation
+
+Content goes here...
+```
+
 ### Best Practices
 
 1. **File Organization**:
@@ -384,3 +400,43 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT
+
+### Using YAML Front Matter
+
+You can include Confluence metadata directly in your Markdown files using YAML front matter at the beginning of the file:
+
+```markdown
+---
+title: "My Documentation"
+space: "TEAM"
+parentId: "123456"
+labels:
+  - documentation
+  - example
+  - markdown
+---
+
+# Content starts here
+
+Regular markdown content...
+```
+
+Available front matter options:
+
+| Option     | Description                           |
+| ---------- | ------------------------------------- |
+| `title`    | The title of the page in Confluence   |
+| `space`    | The key of the Confluence space       |
+| `parentId` | The ID of the parent page             |
+| `pageId`   | The ID of an existing page to update  |
+| `labels`   | An array of labels to add to the page |
+
+Front matter values take precedence over command line options, except when you explicitly provide command line options.
+
+```bash
+# Use metadata from front matter
+doc2conf push docs/example.md
+
+# Override front matter title with command line option
+doc2conf push docs/example.md --title "New Title"
+```
