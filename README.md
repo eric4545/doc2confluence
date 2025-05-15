@@ -156,15 +156,15 @@ doc2conf push docs/example.md --instance-type server
 
 The following environment variables can be set in your `.env` file:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CONFLUENCE_URL` | Your Confluence instance URL | None (required) |
-| `CONFLUENCE_USERNAME` | Your Confluence username or email | None (required for basic auth) |
-| `CONFLUENCE_API_KEY` | Your Confluence API token | None (required for basic auth) |
-| `CONFLUENCE_PAT` | Personal Access Token for Cloud | None (alternative to basic auth) |
-| `CONFLUENCE_SPACE` | Default space key | None |
-| `CONFLUENCE_PARENT_ID` | Default parent page ID | None |
-| `CONFLUENCE_INSTANCE_TYPE` | Instance type: 'cloud' or 'server' | 'cloud' |
+| Variable                   | Description                        | Default                          |
+| -------------------------- | ---------------------------------- | -------------------------------- |
+| `CONFLUENCE_URL`           | Your Confluence instance URL       | None (required)                  |
+| `CONFLUENCE_USERNAME`      | Your Confluence username or email  | None (required for basic auth)   |
+| `CONFLUENCE_API_KEY`       | Your Confluence API token          | None (required for basic auth)   |
+| `CONFLUENCE_PAT`           | Personal Access Token for Cloud    | None (alternative to basic auth) |
+| `CONFLUENCE_SPACE`         | Default space key                  | None                             |
+| `CONFLUENCE_PARENT_ID`     | Default parent page ID             | None                             |
+| `CONFLUENCE_INSTANCE_TYPE` | Instance type: 'cloud' or 'server' | 'cloud'                          |
 
 ### Best Practices
 
@@ -225,8 +225,11 @@ npx ts-node src/cli.ts convert docs/example.md
 
 - `npm run dev` - Run CLI in development mode
 - `npm run watch` - Watch for changes and rebuild
-- `npm run lint` - Run ESLint
-- `npm run format` - Format code with Prettier
+- `npm run lint` - Run Biome linter
+- `npm run lint:fix` - Fix linting issues with Biome
+- `npm run format` - Format code with Biome
+- `npm run check` - Run Biome format and lint checks with auto-fix
+- `npm run ci` - Run Biome checks for CI environment
 - `npm run test` - Run tests
 - `npm run build` - Build the project
 

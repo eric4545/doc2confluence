@@ -35,8 +35,11 @@
     "start": "node dist/cli.js",
     "dev": "ts-node src/cli.ts",
     "watch": "tsc -w",
-    "lint": "eslint src/**/*.ts",
-    "format": "prettier --write \"src/**/*.ts\"",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint . --apply",
+    "format": "biome format . --write",
+    "check": "biome check --apply .",
+    "ci": "biome ci .",
     "prepare": "npm run build"
   },
   "dependencies": {
@@ -56,6 +59,7 @@
     "marked": "^11.0.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "1.9.4",
     "@types/ajv": "^1.0.0",
     "@types/dompurify": "^3.0.5",
     "@types/dotenv": "^8.2.0",
