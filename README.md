@@ -4,6 +4,10 @@
 
 A powerful command-line tool that converts documentation files (Markdown, AsciiDoc, CSV) to Confluence's Atlassian Document Format (ADF).
 
+## Requirements
+
+- Node.js 18 or higher
+
 ## Installation
 
 You can install and use doc2confluence in several ways:
@@ -296,8 +300,11 @@ doc2conf convert input.adoc --format asciidoc
 # Import a CSV file as a table
 doc2conf convert data.csv --format csv
 
-# Push to Confluence
+# Push to Confluence Cloud (default)
 doc2conf push input.md
+
+# Push to Confluence Server/Data Center
+doc2conf push input.md --instance-type server
 ```
 
 ### CSV Import in Markdown
@@ -325,37 +332,33 @@ The CSV path is relative to the location of your Markdown file. For example:
 - `![Data](../data.csv)` - CSV in parent directory
 - `![Data](data/table.csv)` - CSV in subdirectory
 
-### Inline CSV
-You can also include CSV data directly in your Markdown using code blocks:
+### Confluence Server/Data Center Support
 
-```markdown
-# My Documentation
+doc2confluence supports both Confluence Cloud and Confluence Server/Data Center instances. There are some key differences in the APIs:
 
-Here's an inline table:
+1. **Content Format**:
+   - Cloud uses Atlassian Document Format (ADF)
+   - Server/Data Center uses Confluence Storage Format (XHTML-based)
 
-```csv
-header1,header2
-value1,value2
-value3,value4
+2. **API Endpoints**:
+   - Cloud: Uses newer `/api/v2/...` endpoints
+   - Server/Data Center: Uses `/rest/api/...` endpoints
+
+3. **Authentication**:
+   - Both support Basic Authentication with username/API token
+   - Cloud additionally supports Personal Access Tokens (PAT)
+
+To use with Confluence Server/Data Center:
+
+```bash
+# Option 1: Set it in your .env file
+CONFLUENCE_INSTANCE_TYPE=server
+
+# Option 2: Use the command line flag
+doc2conf push input.md --instance-type server
 ```
 
-You can customize the CSV parsing with options:
-
-```csv;delimiter=|;no-header
-value1|value2
-value3|value4
-```
-
-Available options:
-- `delimiter=<char>` - Set custom delimiter (default: comma)
-- `no-header` - Treat first row as data instead of header
-- `skip-empty` - Skip empty lines
-
-The CSV data will be automatically converted to a Confluence table with:
-- Automatic header detection
-- Proper column alignment
-- Cell formatting
-- Support for quoted values
+Note that doc2confluence automatically handles the conversion between ADF and Storage Format, so you don't need to worry about the format differences.
 
 ### Command Options
 
@@ -430,6 +433,8 @@ CONFLUENCE_EMAIL=your-email@domain.com
 CONFLUENCE_API_TOKEN=your-api-token
 CONFLUENCE_SPACE=your-space-key
 CONFLUENCE_PARENT_ID=your-parent-page-id
+# For Server/Data Center, set this to 'server'
+CONFLUENCE_INSTANCE_TYPE=cloud
 ```
 
 ### Option 2: Personal Access Token Authentication
@@ -439,9 +444,40 @@ CONFLUENCE_URL=https://your-domain.atlassian.net
 CONFLUENCE_PAT=your-personal-access-token
 CONFLUENCE_SPACE=your-space-key
 CONFLUENCE_PARENT_ID=your-parent-page-id
+# For Server/Data Center, set this to 'server'
+CONFLUENCE_INSTANCE_TYPE=cloud
 ```
 
+### Server/Data Center Configuration
+For Confluence Server/Data Center instances:
+
+```env
+# For Confluence Server/Data Center
+CONFLUENCE_URL=https://your-confluence-server.example.com
+CONFLUENCE_USERNAME=your-username
+CONFLUENCE_API_KEY=your-api-token-or-password
+CONFLUENCE_INSTANCE_TYPE=server
+CONFLUENCE_SPACE=your-space-key
+```
+
+Note: Some Confluence Server/Data Center versions support Personal Access Tokens. If your instance supports PAT, you can use that authentication method instead.
+
 For more information on creating Personal Access Tokens in Atlassian, see their [official documentation](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html).
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONFLUENCE_URL` | Your Confluence instance URL | None (required) |
+| `CONFLUENCE_USERNAME` | Your Confluence username/email | None (required for basic auth) |
+| `CONFLUENCE_EMAIL` | Alternative to USERNAME | None |
+| `CONFLUENCE_API_KEY` | Your Confluence API token | None (required for basic auth) |
+| `CONFLUENCE_API_TOKEN` | Alternative to API_KEY | None |
+| `CONFLUENCE_PAT` | Personal Access Token | None (alternative to basic auth) |
+| `CONFLUENCE_PERSONAL_ACCESS_TOKEN` | Alternative to PAT | None |
+| `CONFLUENCE_SPACE` | Default space key | None |
+| `CONFLUENCE_PARENT_ID` | Default parent page ID | None |
+| `CONFLUENCE_INSTANCE_TYPE` | Instance type: 'cloud' or 'server' | 'cloud' |
 
 ## Contributing
 

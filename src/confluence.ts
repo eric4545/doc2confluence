@@ -1,7 +1,8 @@
-import fetch from 'node-fetch';
 import { createReadStream } from 'fs';
 import FormData from 'form-data';
 import path from 'path';
+import { ReadStream } from 'fs';
+import { Readable } from 'stream';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
@@ -905,9 +906,15 @@ export class ConfluenceClient {
     form.append('minorEdit', 'true');
 
     try {
+      // Get form headers
+      const formHeaders = form.getHeaders();
+
+      // With Node.js native fetch, we need to use node-fetch compatible approach
+      // by passing the form as a readable stream with the right headers
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: this.getAuthHeaders(form.getHeaders()),
+        headers: this.getAuthHeaders(formHeaders),
+        // @ts-ignore - FormData from form-data is compatible with fetch but TypeScript doesn't know
         body: form,
       });
 
@@ -942,18 +949,12 @@ export class ConfluenceClient {
    * This is needed for Server/Data Center API which doesn't support ADF directly
    */
   private convertADFToStorage(adf: ADFEntity): string {
-    // This is a simplified implementation
-    // A full implementation would need to handle all ADF node types properly
-    // and convert them to the appropriate XHTML storage format
-
-    // For production use, you would need a more comprehensive converter
-    let storageFormat = '<p>Content converted from ADF</p>';
-
-    if (adf.type === 'doc' && adf.content && Array.isArray(adf.content)) {
-      storageFormat = this.processADFNodes(adf.content);
+    // Proper conversion from ADF to Storage format for Server/Data Center
+    if (adf.type !== 'doc' || !adf.content || !Array.isArray(adf.content)) {
+      return '<p>Invalid ADF document structure</p>';
     }
 
-    return storageFormat;
+    return this.processADFNodes(adf.content);
   }
 
   /**
@@ -968,7 +969,7 @@ export class ConfluenceClient {
           result += '<p>' + this.processADFNodes(node.content || []) + '</p>';
           break;
         case 'text':
-          let text = node.text || '';
+          let text = this.escapeHtml(node.text || '');
           if (node.marks) {
             for (const mark of node.marks) {
               switch (mark.type) {
@@ -984,7 +985,21 @@ export class ConfluenceClient {
                 case 'link':
                   text = `<a href="${mark.attrs?.href || '#'}">${text}</a>`;
                   break;
-                // Add other mark types as needed
+                case 'strike':
+                  text = `<s>${text}</s>`;
+                  break;
+                case 'underline':
+                  text = `<u>${text}</u>`;
+                  break;
+                case 'textColor':
+                  if (mark.attrs?.color) {
+                    text = `<span style="color:${mark.attrs.color}">${text}</span>`;
+                  }
+                  break;
+                case 'subsup':
+                  const tag = mark.attrs?.type === 'sub' ? 'sub' : 'sup';
+                  text = `<${tag}>${text}</${tag}>`;
+                  break;
               }
             }
           }
@@ -1011,13 +1026,27 @@ export class ConfluenceClient {
           }
           result += `<ac:plain-text-body><![CDATA[${this.processADFNodes(node.content || [])}]]></ac:plain-text-body></ac:structured-macro>`;
           break;
+        case 'blockquote':
+          result += `<blockquote>${this.processADFNodes(node.content || [])}</blockquote>`;
+          break;
+        case 'panel':
+          const panelType = node.attrs?.panelType || 'info';
+          result += `<ac:structured-macro ac:name="info">`;
+          if (panelType !== 'info') {
+            result += `<ac:parameter ac:name="type">${panelType}</ac:parameter>`;
+          }
+          result += `<ac:rich-text-body>${this.processADFNodes(node.content || [])}</ac:rich-text-body></ac:structured-macro>`;
+          break;
         case 'mediaSingle':
           result += this.processADFNodes(node.content || []);
           break;
         case 'media':
           const attrs = node.attrs || {};
-          if (attrs.type === 'external') {
-            result += `<ac:image ac:alt="${attrs.alt || ''}"><ri:url ri:value="${attrs.url}" /></ac:image>`;
+          if (attrs.type === 'file') {
+            // For Server/Data Center, we need to use the attachment macro
+            result += `<ac:image><ri:attachment ri:filename="${attrs.filename || ''}" /></ac:image>`;
+          } else if (attrs.type === 'external') {
+            result += `<ac:image><ri:url ri:value="${attrs.url}" /></ac:image>`;
           }
           break;
         case 'table':
@@ -1027,12 +1056,47 @@ export class ConfluenceClient {
           result += '<tr>' + this.processADFNodes(node.content || []) + '</tr>';
           break;
         case 'tableCell':
-          result += '<td>' + this.processADFNodes(node.content || []) + '</td>';
+          const colspan = node.attrs?.colspan ? ` colspan="${node.attrs.colspan}"` : '';
+          const rowspan = node.attrs?.rowspan ? ` rowspan="${node.attrs.rowspan}"` : '';
+          result += `<td${colspan}${rowspan}>` + this.processADFNodes(node.content || []) + '</td>';
           break;
         case 'tableHeader':
-          result += '<th>' + this.processADFNodes(node.content || []) + '</th>';
+          const thColspan = node.attrs?.colspan ? ` colspan="${node.attrs.colspan}"` : '';
+          const thRowspan = node.attrs?.rowspan ? ` rowspan="${node.attrs.rowspan}"` : '';
+          result += `<th${thColspan}${thRowspan}>` + this.processADFNodes(node.content || []) + '</th>';
           break;
-        // Add other node types as needed
+        case 'hardBreak':
+          result += '<br />';
+          break;
+        case 'rule':
+          result += '<hr />';
+          break;
+        case 'taskList':
+          result += '<ac:structured-macro ac:name="tasklist">';
+          result += '<ac:parameter ac:name="title">Task List</ac:parameter>';
+          result += '<ac:rich-text-body>' + this.processADFNodes(node.content || []) + '</ac:rich-text-body>';
+          result += '</ac:structured-macro>';
+          break;
+        case 'taskItem':
+          const checked = node.attrs?.state === 'DONE';
+          result += `<ac:task><ac:task-status>${checked ? 'complete' : 'incomplete'}</ac:task-status>`;
+          result += `<ac:task-body>${this.processADFNodes(node.content || [])}</ac:task-body></ac:task>`;
+          break;
+        case 'extension':
+          // Handle extension macros - simplified version
+          if (node.attrs?.extensionType === 'com.atlassian.confluence.macro.core') {
+            result += `<ac:structured-macro ac:name="${node.attrs?.extensionKey || 'info'}">`;
+            if (node.attrs?.parameters) {
+              for (const [key, value] of Object.entries(node.attrs.parameters)) {
+                result += `<ac:parameter ac:name="${key}">${value}</ac:parameter>`;
+              }
+            }
+            if (node.content) {
+              result += `<ac:rich-text-body>${this.processADFNodes(node.content)}</ac:rich-text-body>`;
+            }
+            result += '</ac:structured-macro>';
+          }
+          break;
         default:
           // For unsupported types, try to process their content if available
           if (node.content && Array.isArray(node.content)) {
@@ -1042,5 +1106,15 @@ export class ConfluenceClient {
     }
 
     return result;
+  }
+
+  // Helper method to escape HTML in text nodes
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   }
 }
