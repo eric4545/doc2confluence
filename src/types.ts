@@ -10,6 +10,7 @@ export interface ADFEntity {
     type: string;
     attrs?: Record<string, string | number | boolean | null>;
   }[];
+  [key: string]: unknown;
 }
 
 /**

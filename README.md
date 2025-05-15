@@ -469,18 +469,18 @@ For more information on creating Personal Access Tokens in Atlassian, see their 
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CONFLUENCE_URL` | Your Confluence instance URL | None (required) |
-| `CONFLUENCE_USERNAME` | Your Confluence username/email | None (required for basic auth) |
-| `CONFLUENCE_EMAIL` | Alternative to USERNAME | None |
-| `CONFLUENCE_API_KEY` | Your Confluence API token | None (required for basic auth) |
-| `CONFLUENCE_API_TOKEN` | Alternative to API_KEY | None |
-| `CONFLUENCE_PAT` | Personal Access Token | None (alternative to basic auth) |
-| `CONFLUENCE_PERSONAL_ACCESS_TOKEN` | Alternative to PAT | None |
-| `CONFLUENCE_SPACE` | Default space key | None |
-| `CONFLUENCE_PARENT_ID` | Default parent page ID | None |
-| `CONFLUENCE_INSTANCE_TYPE` | Instance type: 'cloud' or 'server' | 'cloud' |
+| Variable                           | Description                        | Default                          |
+| ---------------------------------- | ---------------------------------- | -------------------------------- |
+| `CONFLUENCE_URL`                   | Your Confluence instance URL       | None (required)                  |
+| `CONFLUENCE_USERNAME`              | Your Confluence username/email     | None (required for basic auth)   |
+| `CONFLUENCE_EMAIL`                 | Alternative to USERNAME            | None                             |
+| `CONFLUENCE_API_KEY`               | Your Confluence API token          | None (required for basic auth)   |
+| `CONFLUENCE_API_TOKEN`             | Alternative to API_KEY             | None                             |
+| `CONFLUENCE_PAT`                   | Personal Access Token              | None (alternative to basic auth) |
+| `CONFLUENCE_PERSONAL_ACCESS_TOKEN` | Alternative to PAT                 | None                             |
+| `CONFLUENCE_SPACE`                 | Default space key                  | None                             |
+| `CONFLUENCE_PARENT_ID`             | Default parent page ID             | None                             |
+| `CONFLUENCE_INSTANCE_TYPE`         | Instance type: 'cloud' or 'server' | 'cloud'                          |
 
 ## Contributing
 

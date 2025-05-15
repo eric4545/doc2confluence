@@ -43,6 +43,7 @@ export interface ConversionOptions {
   title?: string;
   pageId?: string;
   labels?: string[];
+  generateToc?: boolean;
 }
 
 export interface Mark {

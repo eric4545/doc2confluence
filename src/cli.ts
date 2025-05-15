@@ -257,7 +257,7 @@ program
       }
 
       // Use pageId from metadata if available
-      const pageIdParam = metadata.pageId || undefined;
+      const pageIdParam = metadata.pageId ? String(metadata.pageId) : undefined;
 
       const pageId = await client.createOrUpdatePage(
         spaceKey,
@@ -272,16 +272,22 @@ program
         console.log('DEBUG: Response from createOrUpdatePage:', pageId);
       }
 
-      console.log(`Successfully pushed to Confluence (Page ID: ${pageId.id || pageId})`);
+      // Use type assertion to access properties safely
+      const responseId =
+        typeof pageId === 'object' && pageId && 'id' in pageId
+          ? (pageId as { id: string }).id
+          : String(pageId);
+      console.log(`Successfully pushed to Confluence (Page ID: ${responseId})`);
 
       // Build the complete URL from the response
       let pageUrl = 'Not available';
-      if (pageId._links?.webui && pageId._links?.base) {
-        pageUrl = `${pageId._links.base}${pageId._links.webui}`;
-      } else if (pageId._links?.webui) {
+      const typedPageId = pageId as { _links?: { webui?: string; base?: string } };
+      if (typedPageId._links?.webui && typedPageId._links?.base) {
+        pageUrl = `${typedPageId._links.base}${typedPageId._links.webui}`;
+      } else if (typedPageId._links?.webui) {
         // If no base URL is provided, use the configured URL
         const config = getConfluenceConfig();
-        pageUrl = `${config.url}${pageId._links.webui}`;
+        pageUrl = `${config.url}${typedPageId._links.webui}`;
       }
 
       console.log(`Page URL: ${pageUrl}`);
