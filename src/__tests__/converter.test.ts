@@ -127,12 +127,12 @@ describe('Task List handling', () => {
       // Check first task (uncompleted)
       const firstTask = taskList.content[0];
       expect(firstTask.type).toBe('taskItem');
-      expect(firstTask.attrs?.state).toBe('TODO');
+      expect((firstTask.attrs as { state: string })?.state).toBe('TODO');
 
       // Check second task (completed)
       const secondTask = taskList.content[1];
       expect(secondTask.type).toBe('taskItem');
-      expect(secondTask.attrs?.state).toBe('DONE');
+      expect((secondTask.attrs as { state: string })?.state).toBe('DONE');
     }
   });
 
@@ -169,12 +169,12 @@ describe('Task List handling', () => {
         // Check first nested task (uncompleted)
         const firstTask = nestedTaskList.content[0];
         expect(firstTask.type).toBe('taskItem');
-        expect(firstTask.attrs?.state).toBe('TODO');
+        expect((firstTask.attrs as { state: string })?.state).toBe('TODO');
 
         // Check second nested task (completed)
         const secondTask = nestedTaskList.content[1];
         expect(secondTask.type).toBe('taskItem');
-        expect(secondTask.attrs?.state).toBe('DONE');
+        expect((secondTask.attrs as { state: string })?.state).toBe('DONE');
       }
     }
   });
@@ -199,12 +199,12 @@ describe('Task List handling', () => {
       // Check first task (uncompleted)
       const firstTask = taskList.content[0];
       expect(firstTask.type).toBe('taskItem');
-      expect(firstTask.attrs?.state).toBe('TODO');
+      expect((firstTask.attrs as { state: string })?.state).toBe('TODO');
 
       // Check second task (completed)
       const secondTask = taskList.content[1];
       expect(secondTask.type).toBe('taskItem');
-      expect(secondTask.attrs?.state).toBe('DONE');
+      expect((secondTask.attrs as { state: string })?.state).toBe('DONE');
     }
   });
 
@@ -237,12 +237,12 @@ describe('Task List handling', () => {
         // Check first nested numbered task (uncompleted)
         const firstTask = nestedTaskList.content[0];
         expect(firstTask.type).toBe('taskItem');
-        expect(firstTask.attrs?.state).toBe('TODO');
+        expect((firstTask.attrs as { state: string })?.state).toBe('TODO');
 
         // Check second nested numbered task (completed)
         const secondTask = nestedTaskList.content[1];
         expect(secondTask.type).toBe('taskItem');
-        expect(secondTask.attrs?.state).toBe('DONE');
+        expect((secondTask.attrs as { state: string })?.state).toBe('DONE');
       }
     }
   });
