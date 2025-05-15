@@ -165,8 +165,10 @@ export class ConfluenceClient {
 
     if (this.instanceType === 'server') {
       // Server/Data Center API endpoint
-      endpoint = this.buildApiEndpoint(`/space/${spaceKey}`);
-      params = new URLSearchParams(); // No params for specific space retrieval
+      endpoint = this.buildApiEndpoint('/space');
+      params = new URLSearchParams({
+        spaceKey: spaceKey, // Correct parameter name as per documentation
+      });
     } else {
       // Cloud API endpoint
       endpoint = this.buildApiEndpoint('/api/v2/spaces');
@@ -209,8 +211,8 @@ export class ConfluenceClient {
 
       // Format response based on instance type
       if (this.instanceType === 'server') {
-        // Server/Data Center returns the space directly
-        return result;
+        // Server/Data Center returns results array (when using /space endpoint)
+        return result.results?.[0] || null;
       }
       // Cloud returns a results array
       return (result as ConfluenceSpaceResponse).results[0] || null;
