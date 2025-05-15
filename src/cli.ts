@@ -48,6 +48,7 @@ program
   .option('--upload-images', 'Upload images to Confluence')
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--dry-run', 'Preview ADF output without saving')
+  .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
   .action(async (file: string, options: any) => {
     try {
       // Set debug mode from global option
@@ -59,6 +60,7 @@ program
         parseInlineCards: options.inlineCards,
         uploadImages: options.uploadImages,
         useOfficialSchema: options.useOfficialSchema,
+        instanceType: options.instanceType || 'cloud',
       });
 
       if (options.dryRun) {
@@ -91,6 +93,7 @@ program
   .option('--inline-cards', 'Parse inline cards')
   .option('--upload-images', 'Upload images to Confluence')
   .option('--use-official-schema', 'Validate against official ADF schema')
+  .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
   .action(async (file: string, options: any) => {
     try {
       // Set debug mode from global option
@@ -101,13 +104,20 @@ program
       }
 
       const config = await getConfluenceConfig();
+
+      // Override instance type if specified in command line
+      if (options.instanceType) {
+        config.instanceType = options.instanceType;
+      }
+
       if (isDebugMode) {
         console.log('DEBUG: Confluence config:', {
           url: config.url,
           username: config.username,
           hasApiKey: !!config.apiKey,
           defaultSpace: config.defaultSpace,
-          defaultParentId: config.defaultParentId
+          defaultParentId: config.defaultParentId,
+          instanceType: config.instanceType
         });
       }
 
@@ -189,7 +199,8 @@ program
           apiToken: config.apiKey,
           personalAccessToken: config.personalAccessToken
         },
-        isDebugMode
+        isDebugMode,
+        config.instanceType
       );
 
       // Extract title from metadata, command line option, first heading, or filename

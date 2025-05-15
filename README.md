@@ -60,10 +60,23 @@ Jane,28,Designer
 ```
 
 2. **Set up Confluence credentials** (create `.env` file):
+
+#### For Confluence Cloud:
 ```env
 CONFLUENCE_URL=https://your-domain.atlassian.net
-CONFLUENCE_EMAIL=your-email@domain.com
-CONFLUENCE_API_TOKEN=your-api-token
+CONFLUENCE_USERNAME=your-email@domain.com
+CONFLUENCE_API_KEY=your-api-token
+# Or use Personal Access Token (PAT) authentication
+# CONFLUENCE_PAT=your-access-token
+CONFLUENCE_SPACE=your-space-key
+```
+
+#### For Confluence Server/Data Center:
+```env
+CONFLUENCE_URL=https://your-confluence-server.com
+CONFLUENCE_USERNAME=your-username
+CONFLUENCE_API_KEY=your-api-token
+CONFLUENCE_INSTANCE_TYPE=server
 CONFLUENCE_SPACE=your-space-key
 ```
 
@@ -128,6 +141,26 @@ labels:
 
 Content goes here...
 ```
+
+7. **Working with Confluence Server/Data Center**:
+```bash
+# Create a page in a Confluence Server instance
+doc2conf push docs/example.md --instance-type server
+```
+
+### Environment Variables
+
+The following environment variables can be set in your `.env` file:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONFLUENCE_URL` | Your Confluence instance URL | None (required) |
+| `CONFLUENCE_USERNAME` | Your Confluence username or email | None (required for basic auth) |
+| `CONFLUENCE_API_KEY` | Your Confluence API token | None (required for basic auth) |
+| `CONFLUENCE_PAT` | Personal Access Token for Cloud | None (alternative to basic auth) |
+| `CONFLUENCE_SPACE` | Default space key | None |
+| `CONFLUENCE_PARENT_ID` | Default parent page ID | None |
+| `CONFLUENCE_INSTANCE_TYPE` | Instance type: 'cloud' or 'server' | 'cloud' |
 
 ### Best Practices
 
@@ -248,6 +281,7 @@ npm test -- converter.test.ts
 - CSV table import in Markdown using relative links
 - Support for Confluence macros and formatting
 - Inline CSV data support using code blocks
+- Support for both Confluence Cloud and Server/Data Center instances
 
 ## Usage
 

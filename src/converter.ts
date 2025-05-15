@@ -38,6 +38,7 @@ export interface ConversionOptions {
   confluenceClient?: ConfluenceClient;
   useOfficialSchema?: boolean;
   format?: string;
+  instanceType?: 'cloud' | 'server';
 }
 
 export interface Mark {
