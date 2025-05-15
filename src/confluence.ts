@@ -143,8 +143,12 @@ export class ConfluenceClient {
     // The baseUrl from config should already include it
     const apiPath = path.startsWith('/') ? path : `/${path}`;
 
+    // If URL contains /confluence, assume it's a server installation
+    const isServerUrl = this.baseUrl.includes('/confluence');
+    const effectiveInstanceType = isServerUrl ? 'server' : this.instanceType;
+
     // For Server/Data Center, use different API paths
-    if (this.instanceType === 'server') {
+    if (effectiveInstanceType === 'server') {
       // Server/Data Center uses different API endpoints
       // If path already starts with /rest/, use it as-is
       if (path.startsWith('/rest/')) {
@@ -163,7 +167,11 @@ export class ConfluenceClient {
     let endpoint: string;
     let params: URLSearchParams;
 
-    if (this.instanceType === 'server') {
+    // If URL contains /confluence, assume it's a server installation
+    const isServerUrl = this.baseUrl.includes('/confluence');
+    const effectiveInstanceType = isServerUrl ? 'server' : this.instanceType;
+
+    if (effectiveInstanceType === 'server') {
       // Server/Data Center API endpoint
       endpoint = this.buildApiEndpoint('/space');
       params = new URLSearchParams({
@@ -210,7 +218,7 @@ export class ConfluenceClient {
       const result = await response.json();
 
       // Format response based on instance type
-      if (this.instanceType === 'server') {
+      if (effectiveInstanceType === 'server') {
         // Server/Data Center returns results array (when using /space endpoint)
         return result.results?.[0] || null;
       }
