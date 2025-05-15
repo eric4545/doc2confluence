@@ -12,8 +12,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [18.x, 20.x]
-        # Add Node.js 22 once GitHub Actions fully supports it in the runner
+        node-version: [20.x]
 
     steps:
     - name: Checkout repository
