@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { Converter } from '../converter';
+import type { ADFEntity } from '../types';
 
 const converter = new Converter();
 
@@ -243,6 +244,99 @@ describe('Task List handling', () => {
         const secondTask = nestedTaskList.content[1];
         expect(secondTask.type).toBe('taskItem');
         expect((secondTask.attrs as { state: string })?.state).toBe('DONE');
+      }
+    }
+  });
+
+  test('converts task list items with formatted text', async () => {
+    const markdown = `# Formatted Task Items
+- [ ] **Bold task**
+- [ ] *Italic task*
+- [ ] ~~Strikethrough task~~
+- [ ] __Underscored text__`;
+
+    const adf = await converter.convertToADF(markdown);
+    expect(adf.type).toBe('doc');
+    expect(adf.content).toBeDefined();
+
+    // Find the task list in the content
+    const taskList = adf.content?.find((node) => node.type === 'taskList');
+    expect(taskList).toBeDefined();
+
+    if (taskList?.content) {
+      // Should have four task items
+      expect(taskList.content.length).toBe(4);
+
+      // Check that task items have proper content and formatting
+      taskList.content.forEach((task, index) => {
+        expect(task.type).toBe('taskItem');
+        // Cast content to ADFEntity[] to access array elements
+        const content = task.content as ADFEntity[];
+        expect(content[0].type).toBe('text');
+
+        // Check specific formatting marks
+        if (index === 0) {
+          // Bold task should have strong mark
+          expect((content[0].marks as ADFEntity[])[0].type).toBe('strong');
+        } else if (index === 1) {
+          // Italic task should have em mark
+          expect((content[0].marks as ADFEntity[])[0].type).toBe('em');
+        } else if (index === 2) {
+          // Strikethrough task should have strike mark
+          expect((content[0].marks as ADFEntity[])[0].type).toBe('strike');
+        } else if (index === 3) {
+          // Underscored text should have em mark
+          expect((content[0].marks as ADFEntity[])[0].type).toBe('em');
+        }
+      });
+    }
+  });
+
+  test('converts formatted text in nested task lists', async () => {
+    const markdown = `# Nested Formatted Tasks
+- Regular list item
+  - [ ] **Bold nested task**
+  - [ ] ~~Strikethrough nested task~~
+  - [ ] *Italic nested task*`;
+
+    const adf = await converter.convertToADF(markdown);
+    expect(adf.type).toBe('doc');
+    expect(adf.content).toBeDefined();
+
+    // Find the bullet list in the content
+    const bulletList = adf.content?.find((node) => node.type === 'bulletList');
+    expect(bulletList).toBeDefined();
+
+    if (bulletList?.content && bulletList.content.length > 0) {
+      const listItem = bulletList.content[0];
+      expect(listItem.type).toBe('listItem');
+
+      // Find the task list within the list item content
+      const nestedTaskList = listItem.content?.find((node) => node.type === 'taskList');
+      expect(nestedTaskList).toBeDefined();
+
+      if (nestedTaskList?.content) {
+        // Should have three nested task items
+        expect(nestedTaskList.content.length).toBe(3);
+
+        // First task with bold formatting
+        const firstTask = nestedTaskList.content[0];
+        expect(firstTask.type).toBe('taskItem');
+        const firstTaskContent = firstTask.content as ADFEntity[];
+        expect(firstTaskContent[0].type).toBe('text');
+        expect((firstTaskContent[0].marks as ADFEntity[])[0].type).toBe('strong');
+
+        // Second task with strikethrough formatting
+        const secondTask = nestedTaskList.content[1];
+        const secondTaskContent = secondTask.content as ADFEntity[];
+        expect(secondTaskContent[0].type).toBe('text');
+        expect((secondTaskContent[0].marks as ADFEntity[])[0].type).toBe('strike');
+
+        // Third task with italic formatting
+        const thirdTask = nestedTaskList.content[2];
+        const thirdTaskContent = thirdTask.content as ADFEntity[];
+        expect(thirdTaskContent[0].type).toBe('text');
+        expect((thirdTaskContent[0].marks as ADFEntity[])[0].type).toBe('em');
       }
     }
   });

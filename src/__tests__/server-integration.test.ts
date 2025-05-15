@@ -270,7 +270,7 @@ describe('Server/Data Center Integration Tests', () => {
       '<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">javascript</ac:parameter>'
     );
     expect(convertedContent).toContain(
-      '<ac:plain-text-body><![CDATA[console.log(&quot;Hello World&quot;);]]></ac:plain-text-body>'
+      '<ac:plain-text-body><![CDATA[console.log("Hello World");]]></ac:plain-text-body>'
     );
 
     spy.mockRestore();

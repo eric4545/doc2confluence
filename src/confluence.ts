@@ -883,12 +883,14 @@ export class ConfluenceClient {
           break;
         case 'codeBlock': {
           const language = (node.attrs as { language?: string })?.language || '';
-          const codeContent = this.processADFNodes(node.content || []); // Get the raw code content
+          // Use getRawTextContentFromADFNodes to get unescaped code content
+          const codeContent = this.getRawTextContentFromADFNodes(node.content || []);
 
           if (language === 'mermaid') {
             // Wrap Mermaid code in a Markdown macro with Markdown code fences
             result += '<ac:structured-macro ac:name="markdown">';
-            result += `<ac:plain-text-body><![CDATA[\`\`\`mermaid\\n${codeContent}\\n\`\`\`]]></ac:plain-text-body></ac:structured-macro>`;
+            // Ensure newlines are correctly placed around the mermaid content
+            result += `<ac:plain-text-body><![CDATA[\`\`\`mermaid\n${codeContent}\n\`\`\`]]></ac:plain-text-body></ac:structured-macro>`;
           } else {
             result += '<ac:structured-macro ac:name="code">';
             if (language) {
@@ -1013,5 +1015,22 @@ export class ConfluenceClient {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  /**
+   * Extracts raw text content from ADF text nodes, without HTML escaping.
+   * Used for code blocks where raw content is needed.
+   */
+  private getRawTextContentFromADFNodes(nodes: ADFEntity[]): string {
+    let rawText = '';
+    for (const node of nodes) {
+      if (node.type === 'text' && typeof node.text === 'string') {
+        rawText += node.text;
+      } else if (node.content && Array.isArray(node.content)) {
+        // Potentially recurse if text is nested, though unlikely for simple code blocks
+        rawText += this.getRawTextContentFromADFNodes(node.content);
+      }
+    }
+    return rawText;
   }
 }

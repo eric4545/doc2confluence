@@ -431,14 +431,13 @@ describe('ConfluenceClient', () => {
       // Access the private method for testing via a type assertion
       const convertADFToStorage = (client as any).convertADFToStorage.bind(client);
       const expectedOutput =
-        '<ac:structured-macro ac:name="markdown">\
-          <ac:plain-text-body><![CDATA[```mermaid\n\
-graph TD;\nA-->B;\n\
-```]]></ac:plain-text-body>\
-        </ac:structured-macro>';
-      // Normalize whitespace for comparison to avoid issues with indentation/newlines in expected string
+        // This is the pre-normalized string. No spaces between adjacent tags.
+        // The content inside CDATA should not have leading/trailing spaces for this test.
+        '<ac:structured-macro ac:name="markdown"><ac:plain-text-body><![CDATA[```mermaid graph TD; A-->B; ```]]></ac:plain-text-body></ac:structured-macro>';
+
       const normalize = (str: string) => str.replace(/\s+/g, ' ').trim();
-      expect(normalize(convertADFToStorage(adfInput))).toBe(normalize(expectedOutput));
+      // We compare the normalized versions
+      expect(normalize(convertADFToStorage(adfInput))).toBe(expectedOutput); // expectedOutput is already normalized
     });
 
     test('should convert standard ADF codeBlock to code macro', () => {
@@ -486,6 +485,63 @@ graph TD;\nA-->B;\n\
       const convertADFToStorage = (client as any).convertADFToStorage.bind(client);
       const expectedOutput = '<p><strong>This is bold text</strong></p>';
       expect(convertADFToStorage(adfInput)).toBe(expectedOutput);
+    });
+
+    test('should convert ADF taskList with formatted items to correct storage format', () => {
+      const adfInput = {
+        type: 'doc',
+        version: 1,
+        content: [
+          {
+            type: 'taskList',
+            content: [
+              {
+                type: 'taskItem',
+                attrs: { state: 'TODO' },
+                content: [
+                  {
+                    type: 'paragraph',
+                    content: [{ type: 'text', text: 'Item one bold', marks: [{ type: 'strong' }] }],
+                  },
+                ],
+              },
+              {
+                type: 'taskItem',
+                attrs: { state: 'TODO' },
+                content: [
+                  {
+                    type: 'paragraph',
+                    content: [
+                      { type: 'text', text: 'Item two strikethrough', marks: [{ type: 'strike' }] },
+                    ],
+                  },
+                ],
+              },
+              {
+                type: 'taskItem',
+                attrs: { state: 'DONE' }, // Test a completed item
+                content: [
+                  {
+                    type: 'paragraph',
+                    content: [{ type: 'text', text: 'Item three italic', marks: [{ type: 'em' }] }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      const convertADFToStorage = (client as any).convertADFToStorage.bind(client);
+      const expectedStorageFormat =
+        '<ac:structured-macro ac:name="tasklist"><ac:parameter ac:name="title">Task List</ac:parameter><ac:rich-text-body>' +
+        '<ac:task><ac:task-status>incomplete</ac:task-status><ac:task-body><p><strong>Item one bold</strong></p></ac:task-body></ac:task>' +
+        '<ac:task><ac:task-status>incomplete</ac:task-status><ac:task-body><p><s>Item two strikethrough</s></p></ac:task-body></ac:task>' +
+        '<ac:task><ac:task-status>complete</ac:task-status><ac:task-body><p><em>Item three italic</em></p></ac:task-body></ac:task>' +
+        '</ac:rich-text-body></ac:structured-macro>';
+
+      // Normalize both actual and expected to handle potential whitespace differences in macro generation
+      const normalize = (str: string) => str.replace(/\s+/g, '').replace(/>\s+</g, '><');
+      expect(normalize(convertADFToStorage(adfInput))).toBe(normalize(expectedStorageFormat));
     });
 
     // Add more tests for other ADF to Storage conversions here if needed
