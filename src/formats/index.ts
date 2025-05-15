@@ -1,31 +1,34 @@
-import { Converter } from '../converter';
-import { parse as parseCsv } from 'csv-parse';
+import fs from 'node:fs/promises';
 import asciidoctor from 'asciidoctor';
-import fs from 'fs/promises';
+import { parse as parseCsv } from 'csv-parse';
+import { Converter } from '../converter';
+import type { ConversionOptions } from '../converter';
 import { parseMarkdownFile, validateMetadata } from '../metadata';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
   type: string;
   content?: ADFEntity[];
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export type InputFormat = 'markdown' | 'asciidoc' | 'csv';
 
 export interface FormatConverter {
-  convert(content: string, options: any): Promise<ADFEntity>;
+  convert(content: string, options: ConversionOptions): Promise<ADFEntity>;
 }
 
 export class AsciiDocConverter implements FormatConverter {
-  private asciidoctor: any;
+  private asciidoctor: unknown;
 
   constructor() {
     this.asciidoctor = asciidoctor();
   }
 
-  async convert(content: string, options: any): Promise<ADFEntity> {
-    const html = this.asciidoctor.convert(content, {
+  async convert(content: string, options: ConversionOptions): Promise<ADFEntity> {
+    const html = (
+      this.asciidoctor as { convert: (content: string, options: Record<string, unknown>) => string }
+    ).convert(content, {
       safe: 'safe',
       backend: 'html5',
       doctype: 'article',
@@ -43,7 +46,7 @@ export class AsciiDocConverter implements FormatConverter {
 }
 
 export class CsvConverter implements FormatConverter {
-  async convert(content: string, options: any): Promise<ADFEntity> {
+  async convert(content: string, options: ConversionOptions): Promise<ADFEntity> {
     return new Promise((resolve, reject) => {
       // If content is empty or whitespace only, return empty table
       if (!content || content.trim() === '') {
@@ -83,7 +86,7 @@ export class CsvConverter implements FormatConverter {
             content: [
               {
                 type: 'tableRow',
-                content: Object.keys(records[0] || {}).map(header => ({
+                content: Object.keys(records[0] || {}).map((header) => ({
                   type: 'tableHeader',
                   attrs: {
                     colspan: 1,
@@ -93,9 +96,9 @@ export class CsvConverter implements FormatConverter {
                   content: [{ type: 'text', text: header }],
                 })),
               },
-              ...records.map(row => ({
+              ...records.map((row) => ({
                 type: 'tableRow',
-                content: Object.values(row).map(cell => ({
+                content: Object.values(row).map((cell) => ({
                   type: 'tableCell',
                   attrs: {
                     colspan: 1,
@@ -126,7 +129,7 @@ export class CsvConverter implements FormatConverter {
                       background: null,
                     },
                     content: [{ type: 'text', text: 'Error' }],
-                  }
+                  },
                 ],
               },
               {
@@ -140,7 +143,7 @@ export class CsvConverter implements FormatConverter {
                       background: null,
                     },
                     content: [{ type: 'text', text: `Could not parse CSV: ${err.message}` }],
-                  }
+                  },
                 ],
               },
             ],
@@ -157,7 +160,7 @@ export class MarkdownConverter implements FormatConverter {
     this.converter = new Converter();
   }
 
-  async convert(content: string, options: any): Promise<ADFEntity> {
+  async convert(content: string, options: ConversionOptions): Promise<ADFEntity> {
     // Parse front matter metadata
     const { content: mdContent, metadata } = parseMarkdownFile(content);
 
@@ -181,13 +184,16 @@ export async function getConverter(format: InputFormat): Promise<FormatConverter
       return new AsciiDocConverter();
     case 'csv':
       return new CsvConverter();
-    case 'markdown':
     default:
       return new MarkdownConverter();
   }
 }
 
-export async function convertFile(filePath: string, format: InputFormat, options: any): Promise<ADFEntity> {
+export async function convertFile(
+  filePath: string,
+  format: InputFormat,
+  options: ConversionOptions
+): Promise<ADFEntity> {
   const content = await fs.readFile(filePath, 'utf-8');
   const converter = await getConverter(format);
   return converter.convert(content, options);

@@ -3,12 +3,12 @@
  */
 export interface ADFEntity {
   type: string;
-  attrs?: Record<string, any>;
+  attrs?: Record<string, string | number | boolean | null>;
   content?: ADFEntity[];
   text?: string;
   marks?: {
     type: string;
-    attrs?: Record<string, any>;
+    attrs?: Record<string, string | number | boolean | null>;
   }[];
 }
 

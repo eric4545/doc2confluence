@@ -8,7 +8,7 @@ import FormData from 'form-data';
 export interface ADFEntity {
   type: string;
   content?: ADFEntity[];
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface ConfluenceResponse {
@@ -120,13 +120,13 @@ export class ConfluenceClient {
     }
 
     return {
-      'Authorization': authHeader,
-      'Accept': 'application/json',
-      ...additionalHeaders
+      Authorization: authHeader,
+      Accept: 'application/json',
+      ...additionalHeaders,
     };
   }
 
-  private log(...args: any[]) {
+  private log(...args: unknown[]): void {
     if (this.debug) {
       console.log(...args);
     }
@@ -182,14 +182,16 @@ export class ConfluenceClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData;
+        let errorData: unknown;
         try {
           errorData = JSON.parse(errorText);
         } catch (e) {
           errorData = { message: errorText };
         }
 
-        const error = new Error(`Failed to get space: ${errorData.message || response.statusText}`);
+        const error = new Error(
+          `Failed to get space: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
+        );
         if (this.debug) {
           console.error('Response status:', response.status);
           console.error('Response text:', errorText);
@@ -223,7 +225,7 @@ export class ConfluenceClient {
     parentId?: string
   ): Promise<ConfluenceResponse> {
     let endpoint: string;
-    let body: any;
+    let body: Record<string, unknown>;
 
     if (this.instanceType === 'server') {
       // Server/Data Center API endpoint and body format
@@ -289,7 +291,7 @@ export class ConfluenceClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData;
+        let errorData: unknown;
         try {
           errorData = JSON.parse(errorText);
         } catch (e) {
@@ -298,7 +300,7 @@ export class ConfluenceClient {
         }
 
         const error = new Error(
-          `Failed to create page: ${errorData.message || response.statusText}`
+          `Failed to create page: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
         );
         if (this.debug) {
           console.error('Response status:', response.status);
@@ -333,7 +335,7 @@ export class ConfluenceClient {
     version: number
   ): Promise<ConfluenceResponse> {
     let endpoint: string;
-    let body: any;
+    let body: Record<string, unknown>;
 
     if (this.instanceType === 'server') {
       // Server/Data Center API endpoint
@@ -393,7 +395,7 @@ export class ConfluenceClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData;
+        let errorData: unknown;
         try {
           errorData = JSON.parse(errorText);
         } catch (e) {
@@ -401,7 +403,7 @@ export class ConfluenceClient {
         }
 
         const error = new Error(
-          `Failed to update page: ${errorData.message || response.statusText}`
+          `Failed to update page: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
         );
         if (this.debug) {
           console.error('Response status:', response.status);
@@ -430,7 +432,7 @@ export class ConfluenceClient {
   }
 
   async getPage(pageId: string): Promise<ConfluenceResponse> {
-    let endpoint;
+    let endpoint: string;
 
     if (this.instanceType === 'server') {
       // Server/Data Center API endpoint
@@ -449,14 +451,16 @@ export class ConfluenceClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData;
+        let errorData: unknown;
         try {
           errorData = JSON.parse(errorText);
         } catch (e) {
           errorData = { message: errorText };
         }
 
-        const error = new Error(`Failed to get page: ${errorData.message || response.statusText}`);
+        const error = new Error(
+          `Failed to get page: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
+        );
         if (this.debug) {
           console.error('Response status:', response.status);
           console.error('Response text:', errorText);
@@ -478,8 +482,8 @@ export class ConfluenceClient {
     title: string,
     parentId?: string
   ): Promise<ConfluenceResponse | null> {
-    let endpoint;
-    let params;
+    let endpoint: string;
+    let params: URLSearchParams;
 
     if (this.instanceType === 'server') {
       // Server/Data Center API endpoint
@@ -520,7 +524,7 @@ export class ConfluenceClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData;
+        let errorData: unknown;
         try {
           errorData = JSON.parse(errorText);
         } catch (e) {
@@ -528,7 +532,7 @@ export class ConfluenceClient {
         }
 
         const error = new Error(
-          `Failed to search pages: ${errorData.message || response.statusText}`
+          `Failed to search pages: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
         );
         if (this.debug) {
           console.error('Response status:', response.status);
@@ -538,7 +542,7 @@ export class ConfluenceClient {
         throw error;
       }
 
-      let results;
+      let results: ConfluenceResponse[];
       if (this.instanceType === 'server') {
         // Server/Data Center response format
         const data = await response.json();
@@ -587,7 +591,9 @@ export class ConfluenceClient {
           // Check if the page has the specified parentId
           if (this.instanceType === 'server') {
             // For Server/Data Center, check ancestors
-            if (pageDetails.ancestors?.some((ancestor: any) => ancestor.id === parentId)) {
+            if (
+              pageDetails.ancestors?.some((ancestor: { id: string }) => ancestor.id === parentId)
+            ) {
               this.log(`Found page with matching parentId in ancestors: ${pageDetails.id}`);
               return page;
             }
@@ -635,7 +641,7 @@ export class ConfluenceClient {
     parentId?: string,
     pageId?: string,
     labels?: string[]
-  ): Promise<any> {
+  ): Promise<unknown> {
     this.log(`Creating or updating page "${title}" in space "${spaceKey}"`);
 
     try {
@@ -657,7 +663,7 @@ export class ConfluenceClient {
         existingPage = await this.getPageByTitle(spaceKey, title, parentId);
       }
 
-      let result;
+      let result: ConfluenceResponse | null = null;
       if (existingPage) {
         // Update existing page
         this.log(`Page "${title}" exists with ID ${existingPage.id}, updating...`);
@@ -668,9 +674,9 @@ export class ConfluenceClient {
           // Create new page
           this.log(`Page "${title}" does not exist, creating new page...`);
           result = await this.createPage(spaceKey, title, content, parentId);
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Improve error handling for duplicate title scenarios
-          if (error.message?.includes('title already exists')) {
+          if (error instanceof Error && error.message?.includes('title already exists')) {
             // Try to find the page again, but ignore parentId this time
             this.log('Error creating page: Title conflict detected');
             this.log(`Searching for any page with title "${title}" regardless of parent...`);
@@ -689,7 +695,7 @@ export class ConfluenceClient {
       }
 
       // Handle labels if provided
-      if (labels && labels.length > 0 && result.id) {
+      if (labels && labels.length > 0 && result && result.id) {
         this.log(`Adding ${labels.length} labels to page ${result.id}`);
         try {
           await this.addLabelsToPage(result.id, labels);
@@ -710,11 +716,11 @@ export class ConfluenceClient {
     }
   }
 
-  async addLabelsToPage(pageId: string, labels: string[]): Promise<any> {
+  async addLabelsToPage(pageId: string, labels: string[]): Promise<unknown> {
     try {
-      let endpoint;
-      let method;
-      let body;
+      let endpoint: string;
+      let method: string;
+      let body: { prefix: string; name: string }[];
 
       if (this.instanceType === 'server') {
         // Server/Data Center API endpoint
@@ -805,7 +811,7 @@ export class ConfluenceClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData;
+        let errorData: unknown;
         try {
           errorData = JSON.parse(errorText);
         } catch (e) {
@@ -813,7 +819,7 @@ export class ConfluenceClient {
         }
 
         const error = new Error(
-          `Failed to add labels: ${errorData.message || response.statusText}`
+          `Failed to add labels: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
         );
         if (this.debug) {
           console.error('Response status:', response.status);
@@ -833,7 +839,7 @@ export class ConfluenceClient {
 
   // Helper method to get space by ID
   async getSpaceById(spaceId: string): Promise<ConfluenceSpace | null> {
-    let endpoint;
+    let endpoint: string;
 
     if (this.instanceType === 'server') {
       // Server/Data Center - use v1 API and search for space by key
@@ -856,7 +862,7 @@ export class ConfluenceClient {
         const spaces = result.results || [];
 
         // Find the space with the matching ID
-        const space = spaces.find((s: any) => s.id.toString() === spaceId.toString());
+        const space = spaces.find((s: { id: string }) => s.id.toString() === spaceId.toString());
         return space || null;
       } catch (error) {
         if (this.debug && !(error instanceof Error)) {
@@ -895,7 +901,7 @@ export class ConfluenceClient {
     filePath: string,
     comment?: string
   ): Promise<ImageUploadResponse> {
-    let endpoint;
+    let endpoint: string;
 
     if (this.instanceType === 'server') {
       // For Server/Data Center, we need to get the space home page first
@@ -941,7 +947,7 @@ export class ConfluenceClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        let errorData;
+        let errorData: unknown;
         try {
           errorData = JSON.parse(errorText);
         } catch (e) {
@@ -949,7 +955,7 @@ export class ConfluenceClient {
         }
 
         const error = new Error(
-          `Failed to upload image: ${errorData.message || response.statusText}`
+          `Failed to upload image: ${typeof errorData === 'object' && errorData && 'message' in errorData ? (errorData as { message?: string }).message : response.statusText}`
         );
         if (this.debug) {
           console.error('Response status:', response.status);
@@ -992,38 +998,42 @@ export class ConfluenceClient {
           result += `<p>${this.processADFNodes(node.content || [])}</p>`;
           break;
         case 'text': {
-          let text = this.escapeHtml(node.text || '');
-          if (node.marks) {
-            for (const mark of node.marks) {
-              switch (mark.type) {
-                case 'strong':
-                  text = `<strong>${text}</strong>`;
-                  break;
-                case 'em':
-                  text = `<em>${text}</em>`;
-                  break;
-                case 'code':
-                  text = `<code>${text}</code>`;
-                  break;
-                case 'link':
-                  text = `<a href="${mark.attrs?.href || '#'}">${text}</a>`;
-                  break;
-                case 'strike':
-                  text = `<s>${text}</s>`;
-                  break;
-                case 'underline':
-                  text = `<u>${text}</u>`;
-                  break;
-                case 'textColor':
-                  if (mark.attrs?.color) {
-                    text = `<span style="color:${mark.attrs.color}">${text}</span>`;
-                  }
-                  break;
-                case 'subsup': {
-                  const tag = mark.attrs?.type === 'sub' ? 'sub' : 'sup';
-                  text = `<${tag}>${text}</${tag}>`;
-                  break;
+          let text = this.escapeHtml(typeof node.text === 'string' ? node.text : '');
+          const marks = Array.isArray((node as { marks?: unknown }).marks)
+            ? ((node as { marks?: unknown }).marks as unknown[])
+            : [];
+          for (const mark of marks) {
+            if (typeof mark !== 'object' || !mark) continue;
+            const markType = (mark as { type?: string }).type;
+            switch (markType) {
+              case 'strong':
+                text = `<strong>${text}</strong>`;
+                break;
+              case 'em':
+                text = `<em>${text}</em>`;
+                break;
+              case 'code':
+                text = `<code>${text}</code>`;
+                break;
+              case 'link':
+                text = `<a href="${(mark as { attrs?: { href?: string } }).attrs?.href || '#'}">${text}</a>`;
+                break;
+              case 'strike':
+                text = `<s>${text}</s>`;
+                break;
+              case 'underline':
+                text = `<u>${text}</u>`;
+                break;
+              case 'textColor':
+                if ((mark as { attrs?: { color?: string } }).attrs?.color) {
+                  text = `<span style="color:${(mark as { attrs: { color: string } }).attrs.color}">${text}</span>`;
                 }
+                break;
+              case 'subsup': {
+                const tag =
+                  (mark as { attrs?: { type?: string } }).attrs?.type === 'sub' ? 'sub' : 'sup';
+                text = `<${tag}>${text}</${tag}>`;
+                break;
               }
             }
           }
@@ -1031,7 +1041,7 @@ export class ConfluenceClient {
           break;
         }
         case 'heading': {
-          const level = node.attrs?.level || 1;
+          const level = (node.attrs as { level?: number })?.level || 1;
           result += `<h${level}>${this.processADFNodes(node.content || [])}</h${level}>`;
           break;
         }
@@ -1045,7 +1055,7 @@ export class ConfluenceClient {
           result += `<li>${this.processADFNodes(node.content || [])}</li>`;
           break;
         case 'codeBlock': {
-          const language = node.attrs?.language || '';
+          const language = (node.attrs as { language?: string })?.language || '';
           result += '<ac:structured-macro ac:name="code">';
           if (language) {
             result += `<ac:parameter ac:name="language">${language}</ac:parameter>`;
@@ -1057,7 +1067,7 @@ export class ConfluenceClient {
           result += `<blockquote>${this.processADFNodes(node.content || [])}</blockquote>`;
           break;
         case 'panel': {
-          const panelType = node.attrs?.panelType || 'info';
+          const panelType = (node.attrs as { panelType?: string })?.panelType || 'info';
           result += `<ac:structured-macro ac:name="info">`;
           if (panelType !== 'info') {
             result += `<ac:parameter ac:name="type">${panelType}</ac:parameter>`;
@@ -1069,11 +1079,13 @@ export class ConfluenceClient {
           result += this.processADFNodes(node.content || []);
           break;
         case 'media': {
-          const attrs = node.attrs || {};
-          if (attrs.type === 'file') {
+          const attrs = node.attrs as
+            | { type?: string; filename?: string; url?: string }
+            | undefined;
+          if (attrs?.type === 'file') {
             // For Server/Data Center, we need to use the attachment macro
             result += `<ac:image><ri:attachment ri:filename="${attrs.filename || ''}" /></ac:image>`;
-          } else if (attrs.type === 'external') {
+          } else if (attrs?.type === 'external') {
             result += `<ac:image><ri:url ri:value="${attrs.url}" /></ac:image>`;
           }
           break;
@@ -1085,14 +1097,24 @@ export class ConfluenceClient {
           result += `<tr>${this.processADFNodes(node.content || [])}</tr>`;
           break;
         case 'tableCell': {
-          const colspan = node.attrs?.colspan ? ` colspan="${node.attrs.colspan}"` : '';
-          const rowspan = node.attrs?.rowspan ? ` rowspan="${node.attrs.rowspan}"` : '';
+          const colspan = (node.attrs as { colspan?: number })?.colspan
+            ? ` colspan="${(node.attrs as { colspan?: number })?.colspan}"`
+            : '';
+          const rowspan = (node.attrs as { rowspan?: number })?.rowspan
+            ? ` rowspan="${(node.attrs as { rowspan?: number })?.rowspan}"`
+            : '';
           result += `<td${colspan}${rowspan}>${this.processADFNodes(node.content || [])}</td>`;
           break;
         }
         case 'tableHeader': {
-          const thColspan = node.attrs?.colspan ? ` colspan="${node.attrs.colspan}"` : '';
-          const thRowspan = node.attrs?.rowspan ? ` rowspan="${node.attrs.rowspan}"` : '';
+          const thColspan =
+            node.attrs && (node.attrs as { colspan?: number }).colspan
+              ? ` colspan="${(node.attrs as { colspan?: number }).colspan}"`
+              : '';
+          const thRowspan =
+            node.attrs && (node.attrs as { rowspan?: number }).rowspan
+              ? ` rowspan="${(node.attrs as { rowspan?: number }).rowspan}"`
+              : '';
           result += `<th${thColspan}${thRowspan}>${this.processADFNodes(node.content || [])}</th>`;
           break;
         }
@@ -1109,17 +1131,24 @@ export class ConfluenceClient {
           result += '</ac:structured-macro>';
           break;
         case 'taskItem': {
-          const checked = node.attrs?.state === 'DONE';
+          const checked = (node.attrs && (node.attrs as { state?: string }).state) === 'DONE';
           result += `<ac:task><ac:task-status>${checked ? 'complete' : 'incomplete'}</ac:task-status>`;
           result += `<ac:task-body>${this.processADFNodes(node.content || [])}</ac:task-body></ac:task>`;
           break;
         }
-        case 'extension':
+        case 'extension': {
           // Handle extension macros - simplified version
-          if (node.attrs?.extensionType === 'com.atlassian.confluence.macro.core') {
-            result += `<ac:structured-macro ac:name="${node.attrs?.extensionKey || 'info'}">`;
-            if (node.attrs?.parameters) {
-              for (const [key, value] of Object.entries(node.attrs.parameters)) {
+          const extAttrs = node.attrs as
+            | {
+                extensionType?: string;
+                extensionKey?: string;
+                parameters?: Record<string, unknown>;
+              }
+            | undefined;
+          if (extAttrs?.extensionType === 'com.atlassian.confluence.macro.core') {
+            result += `<ac:structured-macro ac:name="${extAttrs.extensionKey || 'info'}">`;
+            if (extAttrs.parameters) {
+              for (const [key, value] of Object.entries(extAttrs.parameters)) {
                 result += `<ac:parameter ac:name="${key}">${value}</ac:parameter>`;
               }
             }
@@ -1129,6 +1158,7 @@ export class ConfluenceClient {
             result += '</ac:structured-macro>';
           }
           break;
+        }
         default:
           // For unsupported types, try to process their content if available
           if (node.content && Array.isArray(node.content)) {

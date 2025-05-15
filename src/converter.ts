@@ -1,24 +1,25 @@
-import * as marked from 'marked';
-import { createReadStream } from 'fs';
-import FormData from 'form-data';
-import path from 'path';
-import fs from 'fs/promises';
-import Ajv from 'ajv';
-import { ConfluenceClient } from './confluence';
-import { parse as parseCsv } from 'csv-parse';
-import { JSDOM } from 'jsdom';
-import createDOMPurify from 'dompurify';
+import { createReadStream } from 'node:fs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import * as adfBuilders from '@atlaskit/adf-utils/builders';
+import Ajv from 'ajv';
+import { parse as parseCsv } from 'csv-parse';
+import createDOMPurify from 'dompurify';
+import FormData from 'form-data';
+import { JSDOM } from 'jsdom';
+import * as marked from 'marked';
+import type { ConfluenceClient } from './confluence';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
   type: string;
   content?: ADFEntity[];
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 // ADF Schema URL
-const ADF_SCHEMA_URL = 'https://unpkg.com/@atlaskit/adf-schema@49.0.0/dist/json-schema/v1/full.json';
+const ADF_SCHEMA_URL =
+  'https://unpkg.com/@atlaskit/adf-schema@49.0.0/dist/json-schema/v1/full.json';
 const ADF_SCHEMA_PATH = path.join(process.cwd(), 'cache', 'adf-schema.json');
 
 // Initialize DOMPurify with JSDOM (required for Node.js environment)
@@ -38,11 +39,15 @@ export interface ConversionOptions {
   useOfficialSchema?: boolean;
   format?: string;
   instanceType?: 'cloud' | 'server';
+  parentId?: string;
+  title?: string;
+  pageId?: string;
+  labels?: string[];
 }
 
 export interface Mark {
   type: string;
-  attrs?: Record<string, any>;
+  attrs?: Record<string, unknown>;
 }
 
 export interface CsvOptions {
@@ -52,7 +57,7 @@ export interface CsvOptions {
 }
 
 export class Converter {
-  private adfSchema: any = null;
+  private adfSchema: unknown = null;
   private ajv: Ajv;
 
   constructor() {
@@ -62,7 +67,7 @@ export class Converter {
   /**
    * Download and cache the official ADF schema
    */
-  private async getADFSchema(): Promise<any> {
+  private async getADFSchema(): Promise<unknown> {
     // Return cached schema if available
     if (this.adfSchema) {
       return this.adfSchema;
@@ -102,7 +107,7 @@ export class Converter {
   /**
    * Validate ADF against the official schema
    */
-  private async validateADF(adf: ADFEntity, useOfficialSchema: boolean = false): Promise<boolean> {
+  private async validateADF(adf: ADFEntity, useOfficialSchema = false): Promise<boolean> {
     // Basic validation
     if (!adf || typeof adf !== 'object' || !adf.type || adf.type !== 'doc') {
       throw new Error('Invalid ADF: Document must have type "doc"');
@@ -118,9 +123,9 @@ export class Converter {
 
           if (!valid) {
             const errors = validate.errors || [];
-            const errorMessages = errors.map(err =>
-              `${err.instancePath} ${err.message}`
-            ).join(', ');
+            const errorMessages = errors
+              .map((err) => `${err.instancePath} ${err.message}`)
+              .join(', ');
 
             throw new Error(`ADF Schema validation failed: ${errorMessages}`);
           }
@@ -163,7 +168,10 @@ export class Converter {
     return adf;
   }
 
-  private async tokenToADFNode(token: marked.Tokens.Generic, options: ConversionOptions): Promise<ADFEntity | null> {
+  private async tokenToADFNode(
+    token: marked.Tokens.Generic,
+    options: ConversionOptions
+  ): Promise<ADFEntity | null> {
     switch (token.type) {
       case 'image':
         // Check if this is a CSV import
@@ -171,13 +179,14 @@ export class Converter {
           return this.handleCsvImport(token.href, options);
         }
         return this.handleImage(token as marked.Tokens.Image, options);
-      case 'text':
+      case 'text': {
         // Check for CSV import syntax: ![csv](path/to/file.csv)
         const csvMatch = token.text.match(/!\[csv\]\((.*?)\)/);
         if (csvMatch) {
           return this.handleCsvImport(csvMatch[1], options);
         }
         return null;
+      }
       case 'heading':
         return {
           type: 'heading',
@@ -185,7 +194,7 @@ export class Converter {
           content: this.parseInlineContent(token.text, options),
         };
 
-      case 'paragraph':
+      case 'paragraph': {
         // Check for special blocks
         if (token.text.startsWith(':::expand')) {
           return this.parseExpandMacro(token.text, options);
@@ -208,12 +217,12 @@ export class Converter {
                   {
                     type: 'action',
                     attrs: {
-                      state: taskMatch[1].toLowerCase() === 'x' ? 'done' : 'todo'
-                    }
-                  }
-                ]
-              }
-            ]
+                      state: taskMatch[1].toLowerCase() === 'x' ? 'done' : 'todo',
+                    },
+                  },
+                ],
+              },
+            ],
           };
         }
 
@@ -229,17 +238,19 @@ export class Converter {
           type: 'paragraph',
           content: this.parseInlineContent(token.text, options),
         };
+      }
 
-      case 'list':
+      case 'list': {
         const listToken = token as marked.Tokens.List;
         // Check if this is a task list
-        const isTaskList = listToken.items.some(item =>
-          item.task === true
-        );
+        const isTaskList = listToken.items.some((item) => item.task === true);
 
         if (isTaskList) {
           // Check if taskList is available (without triggering linter warnings)
-          if (typeof adfBuilders.taskList === 'function' && typeof adfBuilders.taskItem === 'function') {
+          if (
+            typeof adfBuilders.taskList === 'function' &&
+            typeof adfBuilders.taskItem === 'function'
+          ) {
             // Create a task list directly
             return {
               type: 'taskList',
@@ -249,17 +260,17 @@ export class Converter {
                     type: 'taskItem',
                     attrs: {
                       localId: this.generateLocalId(),
-                      state: item.checked ? 'DONE' : 'TODO'
+                      state: item.checked ? 'DONE' : 'TODO',
                     },
                     content: [
                       {
                         type: 'text',
-                        text: item.text
-                      }
-                    ]
+                        text: item.text,
+                      },
+                    ],
                   };
                 })
-              )
+              ),
             };
           }
         }
@@ -284,14 +295,14 @@ export class Converter {
                             {
                               type: 'action',
                               attrs: {
-                                state: item.checked ? 'done' : 'todo'
-                              }
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
+                                state: item.checked ? 'done' : 'todo',
+                              },
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
                 };
               }
 
@@ -302,20 +313,22 @@ export class Converter {
 
               if (nestedBulletedTaskMatch || nestedNumberedTaskMatch) {
                 const match = nestedBulletedTaskMatch || nestedNumberedTaskMatch;
-                const mainText = match![1].trim();
+                const mainText = match?.[1].trim() ?? '';
                 // Process the nested task list separately
-                const nestedListContent = await this.processNestedTaskList(item.text.substring(mainText.length).trim());
+                const nestedListContent = await this.processNestedTaskList(
+                  item.text.substring(mainText.length).trim()
+                );
 
                 return {
                   type: 'listItem',
                   content: [
                     {
                       type: 'paragraph',
-                      content: this.parseInlineContent(mainText, options)
+                      content: this.parseInlineContent(mainText, options),
                     },
                     // Add the nested task list
-                    ...(nestedListContent || [])
-                  ]
+                    ...(nestedListContent || []),
+                  ],
                 };
               }
 
@@ -324,13 +337,14 @@ export class Converter {
                 content: [
                   {
                     type: 'paragraph',
-                    content: this.parseInlineContent(item.text, options)
-                  }
-                ]
+                    content: this.parseInlineContent(item.text, options),
+                  },
+                ],
               };
             })
-          )
+          ),
         };
+      }
 
       case 'table':
         return this.parseTable(token as marked.Tokens.Table);
@@ -339,7 +353,7 @@ export class Converter {
         const codeToken = token as marked.Tokens.Code;
 
         // Handle CSV code blocks
-        if (codeToken.lang && codeToken.lang.startsWith('csv')) {
+        if (codeToken.lang?.startsWith('csv')) {
           console.log('Processing CSV code block:', codeToken.text);
           const csvOptions: CsvOptions = {};
 
@@ -349,7 +363,7 @@ export class Converter {
             const optionsStr = langParts[1];
             console.log('CSV options string:', optionsStr);
 
-            optionsStr.split(',').forEach(opt => {
+            for (const opt of optionsStr.split(',')) {
               const [key, value] = opt.split('=');
               console.log(`Processing CSV option: ${key}=${value}`);
 
@@ -363,7 +377,7 @@ export class Converter {
                 csvOptions.skipEmptyLines = true;
                 console.log('Set skipEmptyLines to true');
               }
-            });
+            }
           }
 
           try {
@@ -374,14 +388,14 @@ export class Converter {
             return {
               type: 'codeBlock',
               attrs: {
-                language: 'csv'
+                language: 'csv',
               },
               content: [
                 {
                   type: 'text',
-                  text: codeToken.text
-                }
-              ]
+                  text: codeToken.text,
+                },
+              ],
             };
           }
         }
@@ -390,14 +404,14 @@ export class Converter {
         return {
           type: 'codeBlock',
           attrs: {
-            language: codeToken.lang || 'plaintext'
+            language: codeToken.lang || 'plaintext',
           },
           content: [
             {
               type: 'text',
-              text: codeToken.text
-            }
-          ]
+              text: codeToken.text,
+            },
+          ],
         };
       }
 
@@ -413,11 +427,14 @@ export class Converter {
       // Reset regex lastIndex
       taskRegex.lastIndex = 0;
 
-      let match;
+      let match: RegExpExecArray | null = null;
       const content: ADFEntity[] = [];
       let lastIndex = 0;
 
-      while ((match = taskRegex.exec(text)) !== null) {
+      while (true) {
+        match = taskRegex.exec(text);
+        if (match === null) break;
+
         // Add any text before the task item
         if (match.index > lastIndex) {
           const beforeText = text.substring(lastIndex, match.index);
@@ -432,10 +449,10 @@ export class Converter {
             {
               type: 'action',
               attrs: {
-                state: match[1].toLowerCase() === 'x' ? 'done' : 'todo'
-              }
-            }
-          ]
+                state: match[1].toLowerCase() === 'x' ? 'done' : 'todo',
+              },
+            },
+          ],
         });
 
         lastIndex = match.index + match[0].length;
@@ -452,7 +469,7 @@ export class Converter {
 
     // Check for image syntax
     const imgRegex = /!\[(.*?)\]\((.*?)\)/g;
-    let match;
+    let match: RegExpExecArray | null = null;
     const content: ADFEntity[] = [];
 
     // If there's an image markdown in the text, extract it and handle it properly
@@ -461,7 +478,10 @@ export class Converter {
       imgRegex.lastIndex = 0;
 
       let lastIndex = 0;
-      while ((match = imgRegex.exec(text)) !== null) {
+      while (true) {
+        match = imgRegex.exec(text);
+        if (match === null) break;
+
         // Add any text before the image
         if (match.index > lastIndex) {
           const beforeText = text.substring(lastIndex, match.index);
@@ -503,14 +523,18 @@ export class Converter {
     return this.splitTextIntoParts(text, options, []);
   }
 
-  private splitTextIntoParts(text: string, options: ConversionOptions, existingContent: ADFEntity[] = []): ADFEntity[] {
+  private splitTextIntoParts(
+    text: string,
+    options: ConversionOptions,
+    existingContent: ADFEntity[] = []
+  ): ADFEntity[] {
     const parts = text.split(/(\s+)/);
     const content = existingContent;
 
-    parts.forEach((part: string, index: number) => {
+    for (const part of parts) {
       if (part.trim() === '') {
         content.push({ type: 'text', text: part });
-        return;
+        continue;
       }
 
       // Handle mentions
@@ -518,7 +542,7 @@ export class Converter {
         const mention = this.parseMentions(part);
         if (mention) {
           content.push(mention);
-          return;
+          continue;
         }
       }
 
@@ -527,7 +551,7 @@ export class Converter {
         const card = this.parseInlineCard(part);
         if (card) {
           content.push(card);
-          return;
+          continue;
         }
       }
 
@@ -536,7 +560,7 @@ export class Converter {
         const status = this.parseStatus(part);
         if (status) {
           content.push(status);
-          return;
+          continue;
         }
       }
 
@@ -545,20 +569,20 @@ export class Converter {
         const panel = this.parsePanel(part);
         if (panel) {
           content.push(panel);
-          return;
+          continue;
         }
       }
 
       // Default to text
       content.push({ type: 'text', text: part });
-    });
+    }
 
     return content;
   }
 
   private parseEmojiContent(text: string): ADFEntity[] {
     const parts = text.split(/(:[a-z_]+:)/);
-    return parts.map(part => {
+    return parts.map((part) => {
       if (part.match(/^:[a-z_]+:$/)) {
         return {
           type: 'emoji',
@@ -654,7 +678,7 @@ export class Converter {
     if (token.header.length > 0) {
       rows.push({
         type: 'tableRow',
-        content: token.header.map(cell => ({
+        content: token.header.map((cell) => ({
           type: 'tableHeader',
           attrs: {
             colspan: 1,
@@ -667,10 +691,10 @@ export class Converter {
     }
 
     // Add data rows
-    token.rows.forEach(row => {
+    for (const row of token.rows) {
       rows.push({
         type: 'tableRow',
-        content: row.map(cell => ({
+        content: row.map((cell) => ({
           type: 'tableCell',
           attrs: {
             colspan: 1,
@@ -680,7 +704,7 @@ export class Converter {
           content: this.parseInlineContent(cell.text, {}),
         })),
       });
-    });
+    }
 
     return {
       type: 'table',
@@ -701,28 +725,28 @@ export class Converter {
     const rows: ADFEntity[] = [];
     const tableRows = table.querySelectorAll('tr');
 
-    tableRows.forEach(row => {
+    for (const row of tableRows) {
       const cells = row.querySelectorAll('th, td');
       const rowContent: ADFEntity[] = [];
 
-      cells.forEach(cell => {
+      for (const cell of cells) {
         const isHeader = cell.tagName.toLowerCase() === 'th';
         rowContent.push({
           type: isHeader ? 'tableHeader' : 'tableCell',
           attrs: {
-            colspan: parseInt(cell.getAttribute('colspan') || '1'),
-            rowspan: parseInt(cell.getAttribute('rowspan') || '1'),
+            colspan: Number.parseInt(cell.getAttribute('colspan') || '1'),
+            rowspan: Number.parseInt(cell.getAttribute('rowspan') || '1'),
             background: null,
           },
           content: this.parseInlineContent(cell.textContent || '', {}),
         });
-      });
+      }
 
       rows.push({
         type: 'tableRow',
         content: rowContent,
       });
-    });
+    }
 
     return {
       type: 'table',
@@ -730,7 +754,10 @@ export class Converter {
     };
   }
 
-  private async handleImage(token: marked.Tokens.Image, options: ConversionOptions): Promise<ADFEntity | null> {
+  private async handleImage(
+    token: marked.Tokens.Image,
+    options: ConversionOptions
+  ): Promise<ADFEntity | null> {
     if (!options.uploadImages || !options.confluenceClient || !options.spaceKey) {
       // Return as mediaSingle with media node inside
       return {
@@ -796,7 +823,10 @@ export class Converter {
     }
   }
 
-  private async handleCsvImport(csvPath: string, options: ConversionOptions): Promise<ADFEntity | null> {
+  private async handleCsvImport(
+    csvPath: string,
+    options: ConversionOptions
+  ): Promise<ADFEntity | null> {
     try {
       const fullPath = path.resolve(options.basePath || '', csvPath);
       const content = await fs.readFile(fullPath, 'utf-8');
@@ -849,7 +879,7 @@ export class Converter {
             content: [
               {
                 type: 'tableRow',
-                content: Object.keys(records[0] || {}).map(header => ({
+                content: Object.keys(records[0] || {}).map((header) => ({
                   type: 'tableHeader',
                   attrs: {
                     colspan: 1,
@@ -859,9 +889,9 @@ export class Converter {
                   content: [{ type: 'text', text: header }],
                 })),
               },
-              ...records.map(row => ({
+              ...records.map((row) => ({
                 type: 'tableRow',
-                content: Object.values(row).map(cell => ({
+                content: Object.values(row).map((cell) => ({
                   type: 'tableCell',
                   attrs: {
                     colspan: 1,
@@ -892,7 +922,7 @@ export class Converter {
                       background: null,
                     },
                     content: [{ type: 'text', text: 'Error' }],
-                  }
+                  },
                 ],
               },
               {
@@ -906,7 +936,7 @@ export class Converter {
                       background: null,
                     },
                     content: [{ type: 'text', text: `Could not parse CSV: ${err.message}` }],
-                  }
+                  },
                 ],
               },
             ],
@@ -937,12 +967,12 @@ export class Converter {
 
     if (allMatches.length > 0) {
       // Sort matches by their position in text to maintain order
-      allMatches.sort((a, b) => a.index! - b.index!);
+      allMatches.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 
       // Create a task list
       const taskListEntity: ADFEntity = {
         type: 'taskList',
-        content: allMatches.map(match => {
+        content: allMatches.map((match) => {
           const state = match[1].toLowerCase() === 'x' ? 'DONE' : 'TODO';
           const taskText = match[2].trim();
 
@@ -950,16 +980,16 @@ export class Converter {
             type: 'taskItem',
             attrs: {
               localId: this.generateLocalId(),
-              state
+              state,
             },
             content: [
               {
                 type: 'text',
-                text: taskText
-              }
-            ]
+                text: taskText,
+              },
+            ],
           };
-        })
+        }),
       };
 
       return [taskListEntity];

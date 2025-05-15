@@ -1,13 +1,29 @@
 #!/usr/bin/env node
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { Command } from 'commander';
-import fs from 'fs/promises';
-import path from 'path';
-import { Converter } from './converter';
+import { getConfluenceConfig, getParentPageId, validateSpaceKey } from './config';
 import { ConfluenceClient } from './confluence';
-import { getConfluenceConfig, validateSpaceKey, getParentPageId } from './config';
-import { convertFile, InputFormat } from './formats';
+import type { ConfluenceInstanceType } from './confluence';
+import { Converter } from './converter';
+import { type InputFormat, convertFile } from './formats';
 import { parseMarkdownFile } from './metadata';
+import type { ADFEntity } from './types';
+
+interface ConvertOptions {
+  dryRun?: boolean;
+  instanceType?: ConfluenceInstanceType;
+  format?: InputFormat;
+  toc?: boolean;
+  inlineCards?: boolean;
+  uploadImages?: boolean;
+  useOfficialSchema?: boolean;
+  output?: string;
+  title?: string;
+  space?: string;
+  parent?: string;
+}
 
 const program = new Command();
 
@@ -15,19 +31,15 @@ const program = new Command();
 let isDebugMode = false;
 
 // Helper function for detailed error logging
-function logError(message: string, error: any) {
+function logError(message: string, error: Error | unknown) {
   console.error(`Error: ${message}`);
-
-  if (isDebugMode) {
-    if (error.response) {
-      console.error('Response data:', error.response.data);
-      console.error('Response status:', error.response.status);
-      console.error('Response headers:', error.response.headers);
-    } else if (error.request) {
-      console.error('Request details:', error.request);
+  if (error instanceof Error) {
+    console.error(error.message);
+    if (error.stack) {
+      console.error(error.stack);
     }
-    console.error('Full error:', error);
-    console.error('Stack trace:', error.stack);
+  } else {
+    console.error(String(error));
   }
 }
 
@@ -49,7 +61,7 @@ program
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--dry-run', 'Preview ADF output without saving')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
-  .action(async (file: string, options: any) => {
+  .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
       isDebugMode = program.opts().debug || false;
@@ -68,14 +80,13 @@ program
         return;
       }
 
-      const outputPath = options.output || path.join(
-        path.dirname(file),
-        `${path.basename(file, path.extname(file))}.adf.json`
-      );
+      const outputPath =
+        options.output ||
+        path.join(path.dirname(file), `${path.basename(file, path.extname(file))}.adf.json`);
 
       await fs.writeFile(outputPath, JSON.stringify(adf, null, 2));
       console.log(`Converted ${file} to ${outputPath}`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       logError('Conversion failed', error);
       process.exit(1);
     }
@@ -94,7 +105,7 @@ program
   .option('--upload-images', 'Upload images to Confluence')
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
-  .action(async (file: string, options: any) => {
+  .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
       isDebugMode = program.opts().debug || false;
@@ -117,7 +128,7 @@ program
           hasApiKey: !!config.apiKey,
           defaultSpace: config.defaultSpace,
           defaultParentId: config.defaultParentId,
-          instanceType: config.instanceType
+          instanceType: config.instanceType,
         });
       }
 
@@ -129,15 +140,15 @@ program
         labels: string[];
       };
 
-      let metadata: PushMetadata = {
+      const metadata: PushMetadata = {
         space: undefined,
         parentId: undefined,
         title: options.title,
         pageId: undefined,
-        labels: []
+        labels: [],
       };
 
-      let adf;
+      let adf: ADFEntity;
 
       if (file.endsWith('.adf.json')) {
         // If file is already ADF JSON, just read it
@@ -184,7 +195,9 @@ program
 
       // Validate space key and parent ID, potentially using metadata values
       const spaceKey = validateSpaceKey(options.space || metadata.space || config.defaultSpace);
-      const parentId = await getParentPageId(options.parent || metadata.parentId || config.defaultParentId);
+      const parentId = await getParentPageId(
+        options.parent || metadata.parentId || config.defaultParentId
+      );
 
       if (isDebugMode) {
         console.log('DEBUG: Creating Confluence client');
@@ -197,7 +210,7 @@ program
           // Prefer email over username if available
           email: config.email || config.username,
           apiToken: config.apiKey,
-          personalAccessToken: config.personalAccessToken
+          personalAccessToken: config.personalAccessToken,
         },
         isDebugMode,
         config.instanceType
@@ -212,14 +225,14 @@ program
       if (!pageTitle && adf && adf.content) {
         // Look for the first heading in the ADF content
         const firstHeading = adf.content.find(
-          (node: any) => node.type === 'heading' && node.content && node.content.length > 0
+          (node: ADFEntity) => node.type === 'heading' && node.content && node.content.length > 0
         );
 
-        if (firstHeading && firstHeading.content) {
+        if (firstHeading?.content) {
           // Extract text from the heading
           const text = firstHeading.content
-            .filter((c: any) => c.type === 'text')
-            .map((c: any) => c.text)
+            .filter((c: ADFEntity) => c.type === 'text')
+            .map((c: ADFEntity) => c.text)
             .join('');
 
           if (text) {
@@ -272,7 +285,7 @@ program
       }
 
       console.log(`Page URL: ${pageUrl}`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       logError('Push to Confluence failed', error);
       process.exit(1);
     }

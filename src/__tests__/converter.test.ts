@@ -1,4 +1,4 @@
-import fs from 'fs/promises';
+import fs from 'node:fs/promises';
 import { Converter } from '../converter';
 
 const converter = new Converter();
@@ -117,10 +117,10 @@ describe('Task List handling', () => {
     expect(adf.content).toBeDefined();
 
     // Find the task list in the content
-    const taskList = adf.content?.find(node => node.type === 'taskList');
+    const taskList = adf.content?.find((node) => node.type === 'taskList');
     expect(taskList).toBeDefined();
 
-    if (taskList && taskList.content) {
+    if (taskList?.content) {
       // Should have two task items
       expect(taskList.content.length).toBe(2);
 
@@ -147,10 +147,10 @@ describe('Task List handling', () => {
     expect(adf.content).toBeDefined();
 
     // Find the bullet list in the content
-    const bulletList = adf.content?.find(node => node.type === 'bulletList');
+    const bulletList = adf.content?.find((node) => node.type === 'bulletList');
     expect(bulletList).toBeDefined();
 
-    if (bulletList && bulletList.content && bulletList.content.length > 0) {
+    if (bulletList?.content && bulletList.content.length > 0) {
       const listItem = bulletList.content[0];
       expect(listItem.type).toBe('listItem');
 
@@ -159,10 +159,10 @@ describe('Task List handling', () => {
       expect(listItem.content?.length).toBeGreaterThan(1);
 
       // Find the task list within the list item content
-      const nestedTaskList = listItem.content?.find(node => node.type === 'taskList');
+      const nestedTaskList = listItem.content?.find((node) => node.type === 'taskList');
       expect(nestedTaskList).toBeDefined();
 
-      if (nestedTaskList && nestedTaskList.content) {
+      if (nestedTaskList?.content) {
         // Should have two task items
         expect(nestedTaskList.content.length).toBe(2);
 
@@ -189,10 +189,10 @@ describe('Task List handling', () => {
     expect(adf.content).toBeDefined();
 
     // Find the task list in the content (should convert to taskList, not orderedList)
-    const taskList = adf.content?.find(node => node.type === 'taskList');
+    const taskList = adf.content?.find((node) => node.type === 'taskList');
     expect(taskList).toBeDefined();
 
-    if (taskList && taskList.content) {
+    if (taskList?.content) {
       // Should have two task items
       expect(taskList.content.length).toBe(2);
 
@@ -219,18 +219,18 @@ describe('Task List handling', () => {
     expect(adf.content).toBeDefined();
 
     // Find the bullet list in the content
-    const bulletList = adf.content?.find(node => node.type === 'bulletList');
+    const bulletList = adf.content?.find((node) => node.type === 'bulletList');
     expect(bulletList).toBeDefined();
 
-    if (bulletList && bulletList.content && bulletList.content.length > 0) {
+    if (bulletList?.content && bulletList.content.length > 0) {
       const listItem = bulletList.content[0];
       expect(listItem.type).toBe('listItem');
 
       // Find the task list within the list item content
-      const nestedTaskList = listItem.content?.find(node => node.type === 'taskList');
+      const nestedTaskList = listItem.content?.find((node) => node.type === 'taskList');
       expect(nestedTaskList).toBeDefined();
 
-      if (nestedTaskList && nestedTaskList.content) {
+      if (nestedTaskList?.content) {
         // Should have two task items
         expect(nestedTaskList.content.length).toBe(2);
 

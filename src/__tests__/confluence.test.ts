@@ -1,6 +1,6 @@
-import { ConfluenceClient } from '../confluence';
 // We'll use global fetch
 import FormData from 'form-data';
+import { ConfluenceClient } from '../confluence';
 
 // Mock global fetch instead of node-fetch
 const mockFetch = jest.fn();
@@ -14,6 +14,14 @@ jest.mock('fs', () => ({
   createReadStream: jest.fn(() => 'mock-file-stream'),
 }));
 
+interface MockResponse extends Partial<Response> {
+  ok: boolean;
+  json: jest.Mock;
+  text?: jest.Mock;
+  status?: number;
+  statusText?: string;
+}
+
 describe('ConfluenceClient', () => {
   // Reset mocks before each test
   beforeEach(() => {
@@ -21,12 +29,12 @@ describe('ConfluenceClient', () => {
     mockFetch.mockClear();
 
     // Setup default mock response with a results array to prevent undefined errors
-    const mockResponse = {
+    const mockResponse: MockResponse = {
       ok: true,
       json: jest.fn().mockResolvedValue({ results: [] }),
       text: jest.fn().mockResolvedValue(''),
     };
-    mockFetch.mockResolvedValue(mockResponse);
+    mockFetch.mockResolvedValue(mockResponse as Response);
   });
 
   describe('Authentication', () => {
@@ -35,7 +43,7 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({ results: [] }),
-      } as any);
+      } as MockResponse);
 
       const client = new ConfluenceClient(
         'https://example.atlassian.net',
@@ -56,7 +64,7 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({ results: [] }),
-      } as any);
+      } as MockResponse);
 
       const client = new ConfluenceClient(
         'https://example.atlassian.net',
@@ -71,13 +79,16 @@ describe('ConfluenceClient', () => {
     });
 
     test('should throw error for invalid auth', () => {
-      expect(() =>
-        new ConfluenceClient(
-          'https://example.atlassian.net',
-          { /* No auth provided */ },
-          false,
-          'cloud'
-        )
+      expect(
+        () =>
+          new ConfluenceClient(
+            'https://example.atlassian.net',
+            {
+              /* No auth provided */
+            },
+            false,
+            'cloud'
+          )
       ).toThrow('Authentication requires either email+apiToken or personalAccessToken');
     });
 
@@ -85,7 +96,7 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({ results: [] }),
-      } as any);
+      } as MockResponse);
 
       const client = new ConfluenceClient(
         'https://example.atlassian.net',
@@ -109,7 +120,7 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({ results: [] }),
-      } as any);
+      } as MockResponse);
 
       const client = new ConfluenceClient(
         'https://example.atlassian.net',
@@ -137,7 +148,7 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({ results: [] }),
-      } as any);
+      } as MockResponse);
 
       const client = new ConfluenceClient(
         'https://example.atlassian.net',
@@ -161,7 +172,7 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({ key: 'TEST' }),
-      } as any);
+      } as MockResponse);
 
       const client = new ConfluenceClient(
         'https://example-server.com',
@@ -204,13 +215,13 @@ describe('ConfluenceClient', () => {
         key: 'TEST',
         name: 'Test Space',
         type: 'global',
-        status: 'current'
+        status: 'current',
       };
 
-      mockFetch.mockResolvedValueOnce({
+      mockFetch.mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({ results: [mockSpace] }),
-      } as any);
+      } as MockResponse);
 
       const result = await client.getSpaceByKey('TEST');
 
@@ -219,12 +230,12 @@ describe('ConfluenceClient', () => {
     });
 
     test('getSpaceByKey should handle API errors', async () => {
-      mockFetch.mockResolvedValueOnce({
+      mockFetch.mockResolvedValue({
         ok: false,
         status: 404,
         statusText: 'Not Found',
         text: jest.fn().mockResolvedValue('Space not found'),
-      } as any);
+      } as MockResponse);
 
       await expect(client.getSpaceByKey('NONEXISTENT')).rejects.toThrow('Failed to get space');
     });
@@ -234,9 +245,9 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: jest.fn().mockResolvedValue({
-          results: [{ id: 'space-123', key: 'TEST', name: 'Test Space' }]
+          results: [{ id: 'space-123', key: 'TEST', name: 'Test Space' }],
         }),
-      } as any);
+      } as MockResponse);
 
       // Mock createPage response
       const createPageResponse = {
@@ -244,15 +255,18 @@ describe('ConfluenceClient', () => {
         type: 'page',
         status: 'current',
         title: 'Test Page',
-        links: { webui: '/pages/123' }
+        links: { webui: '/pages/123' },
       };
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: jest.fn().mockResolvedValue(createPageResponse),
-      } as any);
+      } as MockResponse);
 
-      const content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Hello World' }] }] };
+      const content = {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Hello World' }] }],
+      };
       const result = await client.createPage('TEST', 'Test Page', content);
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -264,7 +278,7 @@ describe('ConfluenceClient', () => {
       expect(options?.method).toBe('POST');
 
       // Verify request body
-      if (options && options.body) {
+      if (options?.body) {
         const body = JSON.parse(options.body as string);
         expect(body).toHaveProperty('title', 'Test Page');
         expect(body).toHaveProperty('spaceId', 'space-123');
@@ -279,7 +293,7 @@ describe('ConfluenceClient', () => {
         title: 'test-image.png',
         mediaType: 'image/png',
         fileSize: 12345,
-        downloadUrl: '/download/attachments/123/test-image.png'
+        downloadUrl: '/download/attachments/123/test-image.png',
       };
 
       mockFetch.mockResolvedValueOnce({
@@ -309,23 +323,25 @@ describe('ConfluenceClient', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: jest.fn().mockResolvedValue({
-          results: [{ id: 'space-123', key: 'TEST', name: 'Test Space' }]
+          results: [{ id: 'space-123', key: 'TEST', name: 'Test Space' }],
         }),
-      } as any);
+      } as MockResponse);
 
       // Mock getPageByTitle response (finding existing page)
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: jest.fn().mockResolvedValue({
-          results: [{
-            id: 'page-789',
-            type: 'page',
-            status: 'current',
-            title: 'Existing Page',
-            version: { number: 1 }
-          }]
+          results: [
+            {
+              id: 'page-789',
+              type: 'page',
+              status: 'current',
+              title: 'Existing Page',
+              version: { number: 1 },
+            },
+          ],
         }),
-      } as any);
+      } as MockResponse);
 
       // Mock updatePage response
       const updateResponse = {
@@ -333,15 +349,18 @@ describe('ConfluenceClient', () => {
         type: 'page',
         status: 'current',
         title: 'Existing Page',
-        version: { number: 2 }
+        version: { number: 2 },
       };
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: jest.fn().mockResolvedValue(updateResponse),
-      } as any);
+      } as MockResponse);
 
-      const content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Updated Content' }] }] };
+      const content = {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Updated Content' }] }],
+      };
       const result = await client.createOrUpdatePage('TEST', 'Existing Page', content);
 
       expect(mockFetch).toHaveBeenCalledTimes(3);
