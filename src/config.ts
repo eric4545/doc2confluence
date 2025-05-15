@@ -1,5 +1,5 @@
+import path from 'node:path';
 import * as dotenv from 'dotenv';
-import path from 'path';
 
 // Load environment variables from .env file
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
@@ -10,9 +10,9 @@ export type ConfluenceInstanceType = 'cloud' | 'server';
 export interface ConfluenceConfig {
   url: string;
   // Support both authentication methods
-  username?: string;  // For backward compatibility
-  email?: string;     // New preferred name for username
-  apiKey?: string;    // For backward compatibility
+  username?: string; // For backward compatibility
+  email?: string; // New preferred name for username
+  apiKey?: string; // For backward compatibility
   personalAccessToken?: string; // New PAT auth method
   defaultSpace?: string;
   defaultParentId?: string;
@@ -26,7 +26,8 @@ export function getConfluenceConfig(): ConfluenceConfig {
     username: process.env.CONFLUENCE_USERNAME || '',
     email: process.env.CONFLUENCE_EMAIL || process.env.CONFLUENCE_USERNAME || '',
     apiKey: process.env.CONFLUENCE_API_KEY || process.env.CONFLUENCE_API_TOKEN || '',
-    personalAccessToken: process.env.CONFLUENCE_PAT || process.env.CONFLUENCE_PERSONAL_ACCESS_TOKEN || '',
+    personalAccessToken:
+      process.env.CONFLUENCE_PAT || process.env.CONFLUENCE_PERSONAL_ACCESS_TOKEN || '',
     defaultSpace: process.env.CONFLUENCE_SPACE,
     defaultParentId: process.env.CONFLUENCE_PARENT_ID,
     instanceType: (process.env.CONFLUENCE_INSTANCE_TYPE as ConfluenceInstanceType) || 'cloud',
@@ -34,7 +35,9 @@ export function getConfluenceConfig(): ConfluenceConfig {
 
   // Validate the instance type
   if (config.instanceType !== 'cloud' && config.instanceType !== 'server') {
-    console.warn(`Invalid CONFLUENCE_INSTANCE_TYPE: ${config.instanceType}. Using default 'cloud'.`);
+    console.warn(
+      `Invalid CONFLUENCE_INSTANCE_TYPE: ${config.instanceType}. Using default 'cloud'.`
+    );
     config.instanceType = 'cloud';
   }
 
@@ -47,14 +50,15 @@ export function getConfluenceConfig(): ConfluenceConfig {
   const hasPAT = !!config.personalAccessToken;
 
   if (!hasBasicAuth && !hasPAT) {
-    if (!config.email && !config.username) missingFields.push('CONFLUENCE_EMAIL or CONFLUENCE_USERNAME');
-    if (!config.apiKey && !config.personalAccessToken) missingFields.push('CONFLUENCE_API_KEY or CONFLUENCE_PERSONAL_ACCESS_TOKEN');
+    if (!config.email && !config.username)
+      missingFields.push('CONFLUENCE_EMAIL or CONFLUENCE_USERNAME');
+    if (!config.apiKey && !config.personalAccessToken)
+      missingFields.push('CONFLUENCE_API_KEY or CONFLUENCE_PERSONAL_ACCESS_TOKEN');
   }
 
   if (missingFields.length > 0) {
     throw new Error(
-      `Missing required environment variables: ${missingFields.join(', ')}\n` +
-      'Please set these variables in your environment or .env file.'
+      `Missing required environment variables: ${missingFields.join(', ')}\nPlease set these variables in your environment or .env file.`
     );
   }
 

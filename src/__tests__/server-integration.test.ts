@@ -1,5 +1,5 @@
-import { ConfluenceClient } from '../confluence';
 import dotenv from 'dotenv';
+import { ConfluenceClient } from '../confluence';
 
 // Mock global fetch
 const mockFetch = jest.fn();
@@ -26,7 +26,7 @@ describe('Server/Data Center Integration Tests', () => {
       'https://confluence-server.example.com',
       {
         email: 'test@example.com',
-        apiToken: 'test-api-token'
+        apiToken: 'test-api-token',
       },
       false,
       'server'
@@ -45,17 +45,19 @@ describe('Server/Data Center Integration Tests', () => {
           ok: true,
           json: () => Promise.resolve({ key: 'TEST', id: '123', name: 'Test Space' }),
         });
-      } else if (url.includes('/content')) {
+      }
+      if (url.includes('/content')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({
-            id: '456',
-            title: 'Test Page',
-            type: 'page',
-            status: 'current',
-            space: { key: 'TEST' },
-            version: { number: 1 }
-          }),
+          json: () =>
+            Promise.resolve({
+              id: '456',
+              title: 'Test Page',
+              type: 'page',
+              status: 'current',
+              space: { key: 'TEST' },
+              version: { number: 1 },
+            }),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -65,7 +67,7 @@ describe('Server/Data Center Integration Tests', () => {
       'https://server.example.com',
       {
         email: 'test@example.com',
-        apiToken: 'test-token'
+        apiToken: 'test-token',
       },
       true, // debug
       'server'
@@ -83,14 +85,14 @@ describe('Server/Data Center Integration Tests', () => {
     // Test content creation endpoint
     const testContent = {
       type: 'doc',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Test' }] }]
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Test' }] }],
     };
     await client.createPage('TEST', 'Test Page', testContent);
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/content'),
       expect.objectContaining({
         method: 'POST',
-        body: expect.stringContaining('"storage"')
+        body: expect.stringContaining('"storage"'),
       })
     );
 
@@ -105,10 +107,10 @@ describe('Server/Data Center Integration Tests', () => {
   // Use conditional tests for real server integration
   (runIntegrationTests ? test : test.skip)('should fetch space by key from server', async () => {
     // Use real fetch, not mock for integration test
-    mockFetch.mockImplementation((url: any, options: any) => {
+    mockFetch.mockImplementation((url: string, options: RequestInit) => {
       console.log(`Sending request to ${url}`);
       // Use global fetch
-      return fetch(url, options);
+      return global.fetch(url, options);
     });
 
     const client = new ConfluenceClient(
@@ -130,10 +132,10 @@ describe('Server/Data Center Integration Tests', () => {
 
   (runIntegrationTests ? test : test.skip)('should create a page in server', async () => {
     // Skip mock for integration test
-    mockFetch.mockImplementation((url: any, options: any) => {
+    mockFetch.mockImplementation((url: string, options: RequestInit) => {
       console.log(`Sending request to ${url}`);
       // Use global fetch
-      return fetch(url, options);
+      return global.fetch(url, options);
     });
 
     const client = new ConfluenceClient(
@@ -182,14 +184,19 @@ describe('Server/Data Center Integration Tests', () => {
       'https://server.example.com',
       {
         email: 'test@example.com',
-        apiToken: 'test-token'
+        apiToken: 'test-token',
       },
       false,
       'server'
     );
 
     // @ts-ignore - accessing private method for testing
-    const spy = jest.spyOn(client as any, 'convertADFToStorage');
+    const spy = jest.spyOn(
+      client as unknown as {
+        convertADFToStorage: (adf: import('../converter').ADFEntity) => string;
+      },
+      'convertADFToStorage'
+    );
 
     mockFetch.mockResolvedValue({
       ok: true,
@@ -203,7 +210,7 @@ describe('Server/Data Center Integration Tests', () => {
         {
           type: 'heading',
           attrs: { level: 1 },
-          content: [{ type: 'text', text: 'Test Heading' }]
+          content: [{ type: 'text', text: 'Test Heading' }],
         },
         {
           type: 'paragraph',
@@ -211,8 +218,8 @@ describe('Server/Data Center Integration Tests', () => {
             { type: 'text', text: 'Normal text ' },
             { type: 'text', text: 'Bold text', marks: [{ type: 'strong' }] },
             { type: 'text', text: ' and ' },
-            { type: 'text', text: 'Italic text', marks: [{ type: 'em' }] }
-          ]
+            { type: 'text', text: 'Italic text', marks: [{ type: 'em' }] },
+          ],
         },
         {
           type: 'bulletList',
@@ -222,27 +229,27 @@ describe('Server/Data Center Integration Tests', () => {
               content: [
                 {
                   type: 'paragraph',
-                  content: [{ type: 'text', text: 'List item 1' }]
-                }
-              ]
+                  content: [{ type: 'text', text: 'List item 1' }],
+                },
+              ],
             },
             {
               type: 'listItem',
               content: [
                 {
                   type: 'paragraph',
-                  content: [{ type: 'text', text: 'List item 2' }]
-                }
-              ]
-            }
-          ]
+                  content: [{ type: 'text', text: 'List item 2' }],
+                },
+              ],
+            },
+          ],
         },
         {
           type: 'codeBlock',
           attrs: { language: 'javascript' },
-          content: [{ type: 'text', text: 'console.log("Hello World");' }]
-        }
-      ]
+          content: [{ type: 'text', text: 'console.log("Hello World");' }],
+        },
+      ],
     };
 
     await client.createPage('TEST', 'Test ADF Conversion', adfDocument);
@@ -253,10 +260,18 @@ describe('Server/Data Center Integration Tests', () => {
 
     // Content should be converted to Storage Format
     expect(convertedContent).toContain('<h1>Test Heading</h1>');
-    expect(convertedContent).toContain('<p>Normal text <strong>Bold text</strong> and <em>Italic text</em></p>');
-    expect(convertedContent).toContain('<ul><li><p>List item 1</p></li><li><p>List item 2</p></li></ul>');
-    expect(convertedContent).toContain('<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">javascript</ac:parameter>');
-    expect(convertedContent).toContain('<ac:plain-text-body><![CDATA[console.log(&quot;Hello World&quot;);]]></ac:plain-text-body>');
+    expect(convertedContent).toContain(
+      '<p>Normal text <strong>Bold text</strong> and <em>Italic text</em></p>'
+    );
+    expect(convertedContent).toContain(
+      '<ul><li><p>List item 1</p></li><li><p>List item 2</p></li></ul>'
+    );
+    expect(convertedContent).toContain(
+      '<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">javascript</ac:parameter>'
+    );
+    expect(convertedContent).toContain(
+      '<ac:plain-text-body><![CDATA[console.log(&quot;Hello World&quot;);]]></ac:plain-text-body>'
+    );
 
     spy.mockRestore();
   });
