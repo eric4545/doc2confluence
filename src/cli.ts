@@ -23,6 +23,7 @@ interface ConvertOptions {
   title?: string;
   space?: string;
   parent?: string;
+  useMarkdownMacro?: boolean;
 }
 
 const program = new Command();
@@ -61,6 +62,7 @@ program
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--dry-run', 'Preview ADF output without saving')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
+  .option('--use-markdown-macro', 'Use Markdown macro instead of converting to ADF')
   .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
@@ -73,6 +75,7 @@ program
         uploadImages: options.uploadImages,
         useOfficialSchema: options.useOfficialSchema,
         instanceType: options.instanceType || 'cloud',
+        useMarkdownMacro: options.useMarkdownMacro,
       });
 
       if (options.dryRun) {
@@ -105,6 +108,7 @@ program
   .option('--upload-images', 'Upload images to Confluence')
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
+  .option('--use-markdown-macro', 'Use Markdown macro instead of converting to ADF')
   .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
@@ -138,6 +142,7 @@ program
         title?: string;
         pageId?: string;
         labels: string[];
+        useMarkdownMacro?: boolean;
       };
 
       const metadata: PushMetadata = {
@@ -146,6 +151,7 @@ program
         title: options.title,
         pageId: undefined,
         labels: [],
+        useMarkdownMacro: options.useMarkdownMacro,
       };
 
       let adf: ADFEntity;
@@ -181,6 +187,11 @@ program
             metadata.title = options.title || frontMatterMetadata.title;
             metadata.pageId = frontMatterMetadata.pageId; // No command line option for pageId
             metadata.labels = frontMatterMetadata.labels || [];
+            // Command line option has priority, then front matter
+            metadata.useMarkdownMacro =
+              options.useMarkdownMacro !== undefined
+                ? options.useMarkdownMacro
+                : frontMatterMetadata.useMarkdownMacro;
           }
         }
 
@@ -190,6 +201,7 @@ program
           parseInlineCards: options.inlineCards,
           uploadImages: options.uploadImages,
           useOfficialSchema: options.useOfficialSchema,
+          useMarkdownMacro: metadata.useMarkdownMacro,
         });
       }
 

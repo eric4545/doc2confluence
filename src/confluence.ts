@@ -309,20 +309,37 @@ export class ConfluenceClient {
     parentId?: string
   ): Promise<ConfluenceResponse> {
     const endpoint = this.buildApiEndpoint('/api/v2/pages');
-    const space = await this.getSpaceByKey(spaceKey); // Relies on refactored getSpaceByKey
+    const space = await this.getSpaceByKey(spaceKey);
     if (!space) {
       throw new Error(`Space with key "${spaceKey}" not found for Cloud page creation.`);
     }
     this.log(`Found space for Cloud page: ${space.name} (ID: ${space.id})`);
+
+    // For Markdown macro, always use storage format
+    let bodyValue: string;
+    let representation: string;
+
+    if (this.isMarkdownMacroADF(content)) {
+      // Extract markdown content and create the macro in storage format
+      bodyValue = this.createMarkdownMacroStorage(this.extractMarkdownContent(content));
+      representation = 'storage';
+      this.log('Using storage format for Markdown macro');
+    } else {
+      // Normal ADF handling
+      bodyValue = JSON.stringify(content);
+      representation = 'atlas_doc_format';
+    }
+
     const body: Record<string, unknown> = {
       spaceId: space.id,
       status: 'current',
       title,
       body: {
-        representation: 'atlas_doc_format',
-        value: JSON.stringify(content),
+        representation,
+        value: bodyValue,
       },
     };
+
     if (parentId) {
       body.parentId = parentId;
     }
@@ -386,17 +403,33 @@ export class ConfluenceClient {
     version: number
   ): Promise<ConfluenceResponse> {
     const endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
+
+    // For Markdown macro, always use storage format
+    let bodyValue: string;
+    let representation: string;
+
+    if (this.isMarkdownMacroADF(content)) {
+      // Extract markdown content and create the macro in storage format
+      bodyValue = this.createMarkdownMacroStorage(this.extractMarkdownContent(content));
+      representation = 'storage';
+      this.log('Using storage format for Markdown macro');
+    } else {
+      // Normal ADF handling
+      bodyValue = JSON.stringify(content);
+      representation = 'atlas_doc_format';
+    }
+
     const body: Record<string, unknown> = {
       id: pageId,
       status: 'current',
       title,
       body: {
-        representation: 'atlas_doc_format',
-        value: JSON.stringify(content),
+        representation,
+        value: bodyValue,
       },
       version: {
         number: version,
-        message: `Updated via md2conf (version ${version})`,
+        message: `Updated via doc2confluence (version ${version})`,
       },
     };
     this.log(`Updating cloud page at: ${endpoint}`);
@@ -805,12 +838,67 @@ export class ConfluenceClient {
    * This is needed for Server/Data Center API which doesn't support ADF directly
    */
   private convertADFToStorage(adf: ADFEntity): string {
+    // Check if this is a Markdown macro
+    if (this.isMarkdownMacroADF(adf)) {
+      return this.createMarkdownMacroStorage(this.extractMarkdownContent(adf));
+    }
+
     // Proper conversion from ADF to Storage format for Server/Data Center
     if (adf.type !== 'doc' || !adf.content || !Array.isArray(adf.content)) {
       return '<p>Invalid ADF document structure</p>';
     }
 
     return this.processADFNodes(adf.content);
+  }
+
+  /**
+   * Checks if the ADF document contains a single Markdown macro
+   */
+  private isMarkdownMacroADF(adf: ADFEntity): boolean {
+    if (
+      adf.type !== 'doc' ||
+      !adf.content ||
+      !Array.isArray(adf.content) ||
+      adf.content.length !== 1
+    ) {
+      return false;
+    }
+
+    const node = adf.content[0];
+    return (
+      node.type === 'extension' &&
+      typeof node.attrs === 'object' &&
+      node.attrs !== null &&
+      typeof (node.attrs as any).extensionType === 'string' &&
+      (node.attrs as any).extensionType === 'com.atlassian.confluence.macro.core' &&
+      typeof (node.attrs as any).extensionKey === 'string' &&
+      (node.attrs as any).extensionKey === 'markdown'
+    );
+  }
+
+  /**
+   * Extracts the Markdown content from a Markdown macro ADF
+   */
+  private extractMarkdownContent(adf: ADFEntity): string {
+    if (!this.isMarkdownMacroADF(adf)) {
+      return '';
+    }
+
+    const node = adf.content?.[0];
+    if (!node?.content || !Array.isArray(node.content) || node.content.length === 0) {
+      return '';
+    }
+
+    const textNode = node.content[0];
+    return typeof textNode.text === 'string' ? textNode.text : '';
+  }
+
+  /**
+   * Creates the storage format XML for a Markdown macro
+   */
+  private createMarkdownMacroStorage(markdownContent: string): string {
+    // This is the simplest format that works with Confluence storage format
+    return `<ac:structured-macro ac:name="markdown"><ac:plain-text-body><![CDATA[${markdownContent}]]></ac:plain-text-body></ac:structured-macro>`;
   }
 
   /**
@@ -974,7 +1062,7 @@ export class ConfluenceClient {
           break;
         }
         case 'extension': {
-          // Handle extension macros - simplified version
+          // Handle extension macros like markdown
           const extAttrs = node.attrs as
             | {
                 extensionType?: string;
@@ -983,16 +1071,27 @@ export class ConfluenceClient {
               }
             | undefined;
           if (extAttrs?.extensionType === 'com.atlassian.confluence.macro.core') {
-            result += `<ac:structured-macro ac:name="${extAttrs.extensionKey || 'info'}">`;
-            if (extAttrs.parameters) {
-              for (const [key, value] of Object.entries(extAttrs.parameters)) {
-                result += `<ac:parameter ac:name="${key}">${value}</ac:parameter>`;
+            if (extAttrs.extensionKey === 'markdown') {
+              // Special handling for markdown macro
+              result += '<ac:structured-macro ac:name="markdown">';
+              if (node.content) {
+                const markdownContent = this.getRawTextContentFromADFNodes(node.content);
+                result += `<ac:plain-text-body><![CDATA[${markdownContent}]]></ac:plain-text-body>`;
               }
+              result += '</ac:structured-macro>';
+            } else {
+              // Other macros
+              result += `<ac:structured-macro ac:name="${extAttrs.extensionKey || 'info'}">`;
+              if (extAttrs.parameters) {
+                for (const [key, value] of Object.entries(extAttrs.parameters)) {
+                  result += `<ac:parameter ac:name="${key}">${value}</ac:parameter>`;
+                }
+              }
+              if (node.content) {
+                result += `<ac:rich-text-body>${this.processADFNodes(node.content)}</ac:rich-text-body>`;
+              }
+              result += '</ac:structured-macro>';
             }
-            if (node.content) {
-              result += `<ac:rich-text-body>${this.processADFNodes(node.content)}</ac:rich-text-body>`;
-            }
-            result += '</ac:structured-macro>';
           }
           break;
         }

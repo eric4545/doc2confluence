@@ -14,8 +14,14 @@ export interface ADFEntity {
 
 export type InputFormat = 'markdown' | 'asciidoc' | 'csv';
 
+// Extend ConversionOptions to ensure useMarkdownMacro is included
+export interface ExtendedConversionOptions extends ConversionOptions {
+  useMarkdownMacro?: boolean;
+  format?: string;
+}
+
 export interface FormatConverter {
-  convert(content: string, options: ConversionOptions): Promise<ADFEntity>;
+  convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity>;
 }
 
 export class AsciiDocConverter implements FormatConverter {
@@ -25,7 +31,7 @@ export class AsciiDocConverter implements FormatConverter {
     this.asciidoctor = asciidoctor();
   }
 
-  async convert(content: string, options: ConversionOptions): Promise<ADFEntity> {
+  async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
     const html = (
       this.asciidoctor as { convert: (content: string, options: Record<string, unknown>) => string }
     ).convert(content, {
@@ -46,7 +52,7 @@ export class AsciiDocConverter implements FormatConverter {
 }
 
 export class CsvConverter implements FormatConverter {
-  async convert(content: string, options: ConversionOptions): Promise<ADFEntity> {
+  async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
     return new Promise((resolve, reject) => {
       // If content is empty or whitespace only, return empty table
       if (!content || content.trim() === '') {
@@ -160,7 +166,7 @@ export class MarkdownConverter implements FormatConverter {
     this.converter = new Converter();
   }
 
-  async convert(content: string, options: ConversionOptions): Promise<ADFEntity> {
+  async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
     // Parse front matter metadata
     const { content: mdContent, metadata } = parseMarkdownFile(content);
 
@@ -192,7 +198,7 @@ export async function getConverter(format: InputFormat): Promise<FormatConverter
 export async function convertFile(
   filePath: string,
   format: InputFormat,
-  options: ConversionOptions
+  options: ExtendedConversionOptions
 ): Promise<ADFEntity> {
   const content = await fs.readFile(filePath, 'utf-8');
   const converter = await getConverter(format);

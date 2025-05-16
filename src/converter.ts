@@ -44,6 +44,9 @@ export interface ConversionOptions {
   pageId?: string;
   labels?: string[];
   generateToc?: boolean;
+  mermaidFormat?: 'mermaid' | 'markdown';
+  mermaidTheme?: string;
+  useMarkdownMacro?: boolean;
 }
 
 export interface Mark {
@@ -145,6 +148,11 @@ export class Converter {
   }
 
   async convertToADF(markdown: string, options: ConversionOptions = {}): Promise<ADFEntity> {
+    // If useMarkdownMacro is enabled, just wrap the markdown in a Markdown macro
+    if (options.useMarkdownMacro) {
+      return this.createMarkdownMacroADF(markdown);
+    }
+
     console.log('Original markdown:', markdown);
 
     // Parse markdown to HTML AST
@@ -1163,5 +1171,38 @@ export class Converter {
     }
 
     return null;
+  }
+
+  /**
+   * Creates an ADF document that contains a Markdown macro with the given markdown content
+   * @param markdown The markdown content to include in the macro
+   * @returns An ADF document with a single extension node for the Markdown macro
+   */
+  private createMarkdownMacroADF(markdown: string): ADFEntity {
+    // Create an ADF document with a proper Markdown macro structure
+    // This format is compatible with both direct ADF handling (Cloud)
+    // and will be correctly converted to storage format (Server)
+    return {
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'extension',
+          attrs: {
+            extensionType: 'com.atlassian.confluence.macro.core',
+            extensionKey: 'markdown',
+            parameters: {
+              macroParams: {},
+            },
+          },
+          content: [
+            {
+              type: 'text',
+              text: markdown.trim(),
+            },
+          ],
+        },
+      ],
+    };
   }
 }
