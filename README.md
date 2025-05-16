@@ -22,6 +22,40 @@ For example:
 npx github:eric4545/doc2confluence push docs/example.md
 ```
 
+### Using Docker
+```bash
+# The simplest way: push a Markdown file directly to Confluence in one command
+docker run --rm --env-file .env ghcr.io/eric4545/doc2confluence:latest \
+  push https://raw.githubusercontent.com/your-org/your-repo/main/docs/example.md
+
+# You can also pull the image first if you'll be using it multiple times
+docker pull ghcr.io/eric4545/doc2confluence:latest
+
+# Push a Markdown file directly to Confluence using environment variables
+docker run --rm \
+  -e CONFLUENCE_URL=https://your-domain.atlassian.net \
+  -e CONFLUENCE_USERNAME=your-email@domain.com \
+  -e CONFLUENCE_API_KEY=your-api-token \
+  -e CONFLUENCE_SPACE=your-space-key \
+  ghcr.io/eric4545/doc2confluence push https://raw.githubusercontent.com/your-org/your-repo/main/docs/example.md
+
+# Or use an .env file with your Confluence credentials
+docker run --rm --env-file .env \
+  ghcr.io/eric4545/doc2confluence push https://raw.githubusercontent.com/your-org/your-repo/main/docs/example.md
+
+# For debugging: convert Markdown to ADF JSON (outputs to stdout)
+docker run --rm \
+  ghcr.io/eric4545/doc2confluence convert https://raw.githubusercontent.com/your-org/your-repo/main/docs/example.md
+```
+
+The Docker image is designed to work with remote URLs, making it easy to push documentation directly from your GitHub repositories to Confluence without needing to mount local files.
+
+## Docker Security Notes
+
+- **Remote URL Processing**: The tool is designed to work with remote URLs, eliminating the need for volume mounting and reducing attack surface.
+- **No Local File Access**: By using remote URLs rather than local files, the container has no access to your local filesystem.
+- **Stateless Operation**: The container is completely stateless and doesn't store any data between runs.
+- **Simplified Deployment**: No need to worry about volume permissions or file access issues.
 
 ## Getting Started
 
@@ -110,7 +144,21 @@ doc2conf convert docs/example.md --toc
 doc2conf push docs/example.md --space TEAM
 ```
 
-4. **Using Inline CSV Data**:
+4. **Using Markdown Macro Instead of ADF Conversion**:
+```bash
+# Keep original Markdown format using Confluence's Markdown macro
+doc2conf push docs/example.md --use-markdown-macro
+```
+
+This option creates a Confluence page with a Markdown macro containing your original Markdown content,
+rather than converting to ADF. This can be useful when:
+
+- You want to preserve the exact Markdown syntax
+- Your Markdown contains advanced features that don't convert well to ADF
+- You prefer to edit the content as Markdown directly in Confluence
+- You need to maintain the document in both Markdown files and Confluence
+
+5. **Using Inline CSV Data**:
 ```markdown
 # Data Analysis
 
@@ -148,13 +196,35 @@ generateToc: true
 Content goes here...
 ```
 
-7. **Working with Confluence Server/Data Center**:
+8. **Working with Confluence Server/Data Center**:
 ```bash
 # Create a page in a Confluence Server instance
 doc2conf push docs/example.md --instance-type server
 ```
 
-### Environment Variables
+## Docker Security
+
+The Docker image includes several security best practices:
+
+1. **Multi-stage Build**: Uses a multi-stage build to minimize image size and reduce attack surface
+2. **Minimal Base Image**: Uses Alpine Linux as a lightweight, security-focused base image
+3. **Non-root User**: Runs as a non-privileged user to limit potential damage from container breakout
+4. **Dependency Management**: Installs only production dependencies to minimize vulnerabilities
+5. **Security Scanning**: All published images are automatically scanned for vulnerabilities, misconfigurations, and secrets using Trivy
+6. **Immutable Tags**: Images are tagged with specific versions to ensure reproducibility and auditability
+7. **Image Hardening**: Follows container security best practices including proper file permissions and layer optimization
+
+The GitHub Container Registry (ghcr.io) automatically scans all images, and our CI/CD pipeline prevents deployment of images with critical vulnerabilities.
+
+### Docker Image Details
+
+- **Base Image**: node:18-alpine (Alpine-based for smaller size)
+- **Exposed Services**: None (CLI tool only)
+- **Runtime User**: Non-root user (docuser)
+- **Image Size**: Optimized through multi-stage builds and dependency management
+- **Supply Chain**: All dependencies are locked and verified during build
+
+## Environment Variables
 
 The following environment variables can be set in your `.env` file:
 
@@ -574,5 +644,3 @@ doc2conf push docs/example.md --title "New Title"
 +| `--use-official-schema` | Validate against official ADF schema                     |
 +| `--instance-type <type>`| Confluence instance type (cloud or server)               |
 +| `--use-markdown-macro`  | Use Markdown macro instead of converting to ADF          |
-
-## Environment Variables
