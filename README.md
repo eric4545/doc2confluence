@@ -123,14 +123,14 @@ Revenue|$50K|+25%
 ```
 ```
 
-5. **Importing External CSV Files**:
+6. **Importing External CSV Files**:
 ```markdown
 # Monthly Report
 
 ![Monthly Data](data/monthly-stats.csv)
 ```
 
-6. **Using YAML Front Matter for Metadata**:
+7. **Using YAML Front Matter for Metadata**:
 ```markdown
 ---
 title: "Team Documentation"
@@ -139,6 +139,8 @@ parentId: "123456"
 labels:
   - documentation
   - team
+useMarkdownMacro: true
+generateToc: true
 ---
 
 # Team Documentation
@@ -503,6 +505,8 @@ labels:
   - documentation
   - example
   - markdown
+useMarkdownMacro: true
+generateToc: true
 ---
 
 # Content starts here
@@ -512,13 +516,15 @@ Regular markdown content...
 
 Available front matter options:
 
-| Option     | Description                           |
-| ---------- | ------------------------------------- |
-| `title`    | The title of the page in Confluence   |
-| `space`    | The key of the Confluence space       |
-| `parentId` | The ID of the parent page             |
-| `pageId`   | The ID of an existing page to update  |
-| `labels`   | An array of labels to add to the page |
+| Option             | Description                                                   |
+| ------------------ | ------------------------------------------------------------- |
+| `title`            | The title of the page in Confluence                           |
+| `space`            | The key of the Confluence space                               |
+| `parentId`         | The ID of the parent page                                     |
+| `pageId`           | The ID of an existing page to update                          |
+| `labels`           | An array of labels to add to the page                         |
+| `useMarkdownMacro` | If true, uses Markdown macro instead of converting to ADF     |
+| `generateToc`      | If true, generates a table of contents at the top of the page |
 
 Front matter values take precedence over command line options, except when you explicitly provide command line options.
 
@@ -529,3 +535,44 @@ doc2conf push docs/example.md
 # Override front matter title with command line option
 doc2conf push docs/example.md --title "New Title"
 ```
+
+## CLI Options
+
++### Global Options
+
++| Option             | Description                                    |
++| ------------------ | ---------------------------------------------- |
++| `--debug`          | Enable debug mode with detailed logging        |
++| `--help`, `-h`     | Display help information                       |
++| `--version`, `-v`  | Display version information                    |
+
++### Convert Command Options
+
++| Option                  | Description                                              |
++| ----------------------- | -------------------------------------------------------- |
++| `-o, --output <file>`   | Output file path                                         |
++| `-f, --format <format>` | Input format (markdown, asciidoc, csv)                   |
++| `--toc`                 | Generate table of contents                               |
++| `--inline-cards`        | Parse inline cards                                       |
++| `--upload-images`       | Upload images to Confluence                              |
++| `--use-official-schema` | Validate against official ADF schema                     |
++| `--dry-run`             | Preview ADF output without saving                        |
++| `--instance-type <type>`| Confluence instance type (cloud or server)               |
++| `--use-markdown-macro`  | Use Markdown macro instead of converting to ADF          |
+
++### Push Command Options
+
++| Option                  | Description                                              |
++| ----------------------- | -------------------------------------------------------- |
++| `-s, --space <key>`     | Confluence space key                                     |
++| `-p, --parent <id>`     | Parent page ID                                           |
++| `-t, --title <title>`   | Page title                                               |
++| `-f, --format <format>` | Input format (markdown, asciidoc, csv)                   |
++| `--toc`                 | Generate table of contents                               |
++| `--inline-cards`        | Parse inline cards                                       |
++| `--upload-images`       | Upload images to Confluence                              |
++| `--use-official-schema` | Validate against official ADF schema                     |
++| `--instance-type <type>`| Confluence instance type (cloud or server)               |
++| `--use-markdown-macro`  | Use Markdown macro instead of converting to ADF          |
+
+## Environment Variables
