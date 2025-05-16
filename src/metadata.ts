@@ -6,6 +6,7 @@ export interface ConfluenceMetadata {
   parentId?: string;
   pageId?: string;
   labels?: string[];
+  useMarkdownMacro?: boolean;
 }
 
 export interface ParsedMarkdown {
@@ -22,6 +23,7 @@ export function parseMarkdownFile(content: string): ParsedMarkdown {
     parentId: data.confluence?.parentId || data.parentId,
     pageId: data.confluence?.pageId || data.pageId,
     labels: data.confluence?.labels || data.labels || [],
+    useMarkdownMacro: data.confluence?.useMarkdownMacro || data.useMarkdownMacro || false,
   };
 
   return {
@@ -41,5 +43,6 @@ export function validateMetadata(
     title: metadata.title,
     pageId: metadata.pageId,
     labels: metadata.labels,
+    useMarkdownMacro: metadata.useMarkdownMacro,
   };
 }
