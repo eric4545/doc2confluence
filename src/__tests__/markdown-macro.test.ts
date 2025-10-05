@@ -24,7 +24,7 @@ function test() {
 | Value 1  | Value 2  |
 `;
 
-    const adf = await converter.convertToADF(markdown, { useMarkdownMacro: true });
+    const adf = await converter.convertToADF(markdown, { macroFormat: 'markdown' });
 
     // Check the ADF structure
     expect(adf.type).toBe('doc');

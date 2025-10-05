@@ -8,6 +8,7 @@ import createDOMPurify from 'dompurify';
 import FormData from 'form-data';
 import { JSDOM } from 'jsdom';
 import * as marked from 'marked';
+import * as showdown from 'showdown';
 import type { ConfluenceClient } from './confluence';
 
 // Define ADFEntity type since we can't import it
@@ -46,7 +47,7 @@ export interface ConversionOptions {
   generateToc?: boolean;
   mermaidFormat?: 'mermaid' | 'markdown';
   mermaidTheme?: string;
-  useMarkdownMacro?: boolean;
+  macroFormat?: 'markdown' | 'html';
 }
 
 export interface Mark {
@@ -148,9 +149,13 @@ export class Converter {
   }
 
   async convertToADF(markdown: string, options: ConversionOptions = {}): Promise<ADFEntity> {
-    // If useMarkdownMacro is enabled, just wrap the markdown in a Markdown macro
-    if (options.useMarkdownMacro) {
+    // If macroFormat is specified, use the appropriate macro instead of ADF conversion
+    if (options.macroFormat === 'markdown') {
       return this.createMarkdownMacroADF(markdown);
+    }
+
+    if (options.macroFormat === 'html') {
+      return this.createHtmlMacroADF(markdown);
     }
 
     console.log('Original markdown:', markdown);
@@ -1199,6 +1204,63 @@ export class Converter {
             {
               type: 'text',
               text: markdown.trim(),
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  /**
+   * Creates an ADF document that contains an HTML macro with HTML converted from markdown using showdown
+   * @param markdown The markdown content to convert to HTML and include in the macro
+   * @returns An ADF document with a single extension node for the HTML macro
+   */
+  private createHtmlMacroADF(markdown: string): ADFEntity {
+    // Configure showdown with all necessary options for comprehensive HTML conversion
+    const converter = new showdown.Converter({
+      tables: true, // Enable table syntax support
+      tablesHeaderId: true, // Generate automatic ids for table headers
+      simpleLineBreaks: true, // Allow line breaks within table cells (better multi-line support)
+      strikethrough: true, // Support strikethrough text (~~text~~)
+      ghCodeBlocks: true, // Support GitHub-style code block syntax
+      parseImgDimensions: true, // Enable image dimension parsing
+      simplifiedAutoLink: true, // Automatically convert plain text URLs to links
+      tasklists: true, // Enable task list support
+      emoji: true, // Enable emoji support
+      underline: true, // Enable underline support
+      ghMentions: true, // Enable GitHub-style @mentions
+      smoothLivePreview: true, // Better rendering
+      headerLevelStart: 1, // Start headers at h1
+      noHeaderId: false, // Allow header IDs for better navigation
+      customizedHeaderId: true, // Enable custom header IDs
+      literalMidWordUnderscores: true, // Literal interpretation of mid-word underscores
+      excludeTrailingPunctuationFromURLs: true, // Better URL parsing
+      requireSpaceBeforeHeadingText: true, // Require space after # for headers
+    });
+
+    // Convert markdown to HTML
+    const html = converter.makeHtml(markdown.trim());
+
+    // Create an ADF document with HTML macro structure
+    // The HTML macro in Confluence uses the 'html' extension key
+    return {
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'extension',
+          attrs: {
+            extensionType: 'com.atlassian.confluence.macro.core',
+            extensionKey: 'html',
+            parameters: {
+              macroParams: {},
+            },
+          },
+          content: [
+            {
+              type: 'text',
+              text: html,
             },
           ],
         },

@@ -137,19 +137,34 @@ doc2conf convert docs/example.md --toc
 doc2conf push docs/example.md --space TEAM
 ```
 
-4. **Using Markdown Macro Instead of ADF Conversion**:
+4. **Using Macro Format Instead of ADF Conversion**:
 ```bash
-# Keep original Markdown format using Confluence's Markdown macro
-doc2conf push docs/example.md --use-markdown-macro
+# Use Markdown macro - keeps original Markdown format
+doc2conf push docs/example.md --macro-format markdown
+
+# Use HTML macro - converts to HTML for better table rendering
+doc2conf push docs/example.md --macro-format html
 ```
 
-This option creates a Confluence page with a Markdown macro containing your original Markdown content,
-rather than converting to ADF. This can be useful when:
+The macro format option creates a Confluence page with a macro instead of converting to native ADF:
 
-- You want to preserve the exact Markdown syntax
-- Your Markdown contains advanced features that don't convert well to ADF
-- You prefer to edit the content as Markdown directly in Confluence
-- You need to maintain the document in both Markdown files and Confluence
+**Markdown Macro** (`--macro-format markdown`):
+- Preserves exact Markdown syntax
+- Editable as Markdown in Confluence
+- Best for: maintaining source format, simple content
+
+**HTML Macro** (`--macro-format html`):
+- Converts Markdown to HTML using Showdown library
+- Superior table rendering with multi-line content support
+- Comprehensive Markdown feature support (emoji, task lists, etc.)
+- Best for: complex tables, rich formatting requirements
+
+You can also set this in your frontmatter:
+```markdown
+---
+macroFormat: html  # or 'markdown'
+---
+```
 
 5. **Using Inline CSV Data**:
 ```markdown
@@ -337,6 +352,37 @@ npm test -- converter.test.ts
 4. Run tests and linting
 5. Submit a pull request
 
+## Migration Guide
+
+### Upgrading from `useMarkdownMacro` to `macroFormat`
+
+If you're using the old `useMarkdownMacro` option, it still works but is deprecated. Please update your configuration:
+
+**Old way (deprecated but still works):**
+```yaml
+---
+useMarkdownMacro: true
+---
+```
+
+**New way (recommended):**
+```yaml
+---
+macroFormat: markdown  # or 'html'
+---
+```
+
+**CLI:**
+```bash
+# Old (still works with warning)
+doc2conf push docs/example.md --use-markdown-macro
+
+# New (recommended)
+doc2conf push docs/example.md --macro-format markdown
+```
+
+The old options will continue to work but will show a deprecation warning. We recommend updating to avoid future compatibility issues.
+
 ## Features
 
 - Convert Markdown files to Confluence ADF format
@@ -351,7 +397,7 @@ npm test -- converter.test.ts
 - Table of contents generation
 - Code block syntax highlighting
 - CSV table import in Markdown using relative links
-- Support for Confluence macros and formatting
+- Support for Confluence macros and formatting (Markdown and HTML)
 - Inline CSV data support using code blocks
 - Support for both Confluence Cloud and Server/Data Center instances
 

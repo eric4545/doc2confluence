@@ -14,9 +14,9 @@ export interface ADFEntity {
 
 export type InputFormat = 'markdown' | 'asciidoc' | 'csv';
 
-// Extend ConversionOptions to ensure useMarkdownMacro is included
+// Extend ConversionOptions to ensure macro options are included
 export interface ExtendedConversionOptions extends ConversionOptions {
-  useMarkdownMacro?: boolean;
+  macroFormat?: 'markdown' | 'html';
   format?: string;
 }
 
@@ -171,6 +171,7 @@ export class MarkdownConverter implements FormatConverter {
     const { content: mdContent, metadata } = parseMarkdownFile(content);
 
     // Merge metadata with options
+    // Note: metadata from frontmatter takes precedence over CLI options
     const mergedOptions = {
       ...options,
       spaceKey: metadata.space || options.spaceKey,
@@ -178,6 +179,7 @@ export class MarkdownConverter implements FormatConverter {
       title: metadata.title || options.title,
       pageId: metadata.pageId || options.pageId,
       labels: metadata.labels || options.labels || [],
+      macroFormat: metadata.macroFormat || options.macroFormat,
     };
 
     return this.converter.convertToADF(mdContent, mergedOptions);

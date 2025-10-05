@@ -23,7 +23,7 @@ interface ConvertOptions {
   title?: string;
   space?: string;
   parent?: string;
-  useMarkdownMacro?: boolean;
+  macroFormat?: 'markdown' | 'html';
 }
 
 const program = new Command();
@@ -62,7 +62,7 @@ program
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--dry-run', 'Preview ADF output without saving')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
-  .option('--use-markdown-macro', 'Use Markdown macro instead of converting to ADF')
+  .option('--macro-format <format>', 'Use macro format instead of ADF (markdown or html)')
   .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
@@ -75,7 +75,7 @@ program
         uploadImages: options.uploadImages,
         useOfficialSchema: options.useOfficialSchema,
         instanceType: options.instanceType || 'cloud',
-        useMarkdownMacro: options.useMarkdownMacro,
+        macroFormat: options.macroFormat,
       });
 
       if (options.dryRun) {
@@ -108,7 +108,7 @@ program
   .option('--upload-images', 'Upload images to Confluence')
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
-  .option('--use-markdown-macro', 'Use Markdown macro instead of converting to ADF')
+  .option('--macro-format <format>', 'Use macro format instead of ADF (markdown or html)')
   .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
@@ -142,7 +142,7 @@ program
         title?: string;
         pageId?: string;
         labels: string[];
-        useMarkdownMacro?: boolean;
+        macroFormat?: 'markdown' | 'html';
       };
 
       const metadata: PushMetadata = {
@@ -151,7 +151,7 @@ program
         title: options.title,
         pageId: undefined,
         labels: [],
-        useMarkdownMacro: options.useMarkdownMacro,
+        macroFormat: options.macroFormat,
       };
 
       let adf: ADFEntity;
@@ -188,10 +188,10 @@ program
             metadata.pageId = frontMatterMetadata.pageId; // No command line option for pageId
             metadata.labels = frontMatterMetadata.labels || [];
             // Command line option has priority, then front matter
-            metadata.useMarkdownMacro =
-              options.useMarkdownMacro !== undefined
-                ? options.useMarkdownMacro
-                : frontMatterMetadata.useMarkdownMacro;
+            metadata.macroFormat =
+              options.macroFormat !== undefined
+                ? options.macroFormat
+                : frontMatterMetadata.macroFormat;
           }
         }
 
@@ -201,7 +201,7 @@ program
           parseInlineCards: options.inlineCards,
           uploadImages: options.uploadImages,
           useOfficialSchema: options.useOfficialSchema,
-          useMarkdownMacro: metadata.useMarkdownMacro,
+          macroFormat: metadata.macroFormat,
         });
       }
 
