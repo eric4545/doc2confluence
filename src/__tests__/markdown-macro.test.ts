@@ -1,9 +1,11 @@
+import assert from 'node:assert';
+import { describe, it } from 'node:test';
 import { Converter } from '../converter';
 
 describe('Markdown Macro', () => {
   const converter = new Converter();
 
-  test('converts markdown to a document with a markdown macro', async () => {
+  it('converts markdown to a document with a markdown macro', async () => {
     const markdown = `# Test Heading
 
 This is a test paragraph.
@@ -27,23 +29,23 @@ function test() {
     const adf = await converter.convertToADF(markdown, { macroFormat: 'markdown' });
 
     // Check the ADF structure
-    expect(adf.type).toBe('doc');
-    expect(adf.version).toBe(1);
-    expect(adf.content?.length).toBe(1);
+    assert.strictEqual(adf.type, 'doc');
+    assert.strictEqual(adf.version, 1);
+    assert.strictEqual(adf.content?.length, 1);
 
     // Check that we have an extension node with the markdown macro
     const macroNode = adf.content?.[0];
-    expect(macroNode?.type).toBe('extension');
+    assert.strictEqual(macroNode?.type, 'extension');
 
     // Check extension attributes with type assertion
     const attrs = macroNode?.attrs as any;
-    expect(attrs?.extensionType).toBe('com.atlassian.confluence.macro.core');
-    expect(attrs?.extensionKey).toBe('markdown');
-    expect(attrs?.parameters?.macroParams).toBeDefined();
+    assert.strictEqual(attrs?.extensionType, 'com.atlassian.confluence.macro.core');
+    assert.strictEqual(attrs?.extensionKey, 'markdown');
+    assert.ok(attrs?.parameters?.macroParams !== undefined);
 
     // Check that the text node contains the original markdown
     const textNode = macroNode?.content?.[0];
-    expect(textNode?.type).toBe('text');
-    expect(textNode?.text).toBe(markdown.trim());
+    assert.strictEqual(textNode?.type, 'text');
+    assert.strictEqual(textNode?.text, markdown.trim());
   });
 });

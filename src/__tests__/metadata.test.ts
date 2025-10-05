@@ -1,7 +1,9 @@
+import assert from 'node:assert';
+import { describe, it } from 'node:test';
 import { parseMarkdownFile } from '../metadata';
 
 describe('Metadata Parser', () => {
-  test('parses YAML front matter with macroFormat option', () => {
+  it('parses YAML front matter with macroFormat option', () => {
     const markdown = `---
 title: "Test Document"
 space: "TEST"
@@ -20,17 +22,17 @@ This is test content.
     const { content, metadata } = parseMarkdownFile(markdown);
 
     // Check that the metadata was parsed correctly
-    expect(metadata.title).toBe('Test Document');
-    expect(metadata.space).toBe('TEST');
-    expect(metadata.parentId).toBe('12345');
-    expect(metadata.labels).toEqual(['test', 'example']);
-    expect(metadata.macroFormat).toBe('markdown');
+    assert.strictEqual(metadata.title, 'Test Document');
+    assert.strictEqual(metadata.space, 'TEST');
+    assert.strictEqual(metadata.parentId, '12345');
+    assert.deepStrictEqual(metadata.labels, ['test', 'example']);
+    assert.strictEqual(metadata.macroFormat, 'markdown');
 
     // Check that the content was parsed correctly (without front matter)
-    expect(content.trim().startsWith('# Test Content')).toBe(true);
+    assert.ok(content.trim().startsWith('# Test Content'));
   });
 
-  test('parses macroFormat html option', () => {
+  it('parses macroFormat html option', () => {
     const markdown = `---
 title: "Test Document"
 macroFormat: html
@@ -40,10 +42,10 @@ macroFormat: html
 `;
 
     const { metadata } = parseMarkdownFile(markdown);
-    expect(metadata.macroFormat).toBe('html');
+    assert.strictEqual(metadata.macroFormat, 'html');
   });
 
-  test('uses undefined for macroFormat when not specified', () => {
+  it('uses undefined for macroFormat when not specified', () => {
     const markdown = `---
 title: "Test Document"
 space: "TEST"
@@ -53,10 +55,10 @@ space: "TEST"
 `;
 
     const { metadata } = parseMarkdownFile(markdown);
-    expect(metadata.macroFormat).toBeUndefined();
+    assert.strictEqual(metadata.macroFormat, undefined);
   });
 
-  test('supports legacy useMarkdownMacro for backward compatibility', () => {
+  it('supports legacy useMarkdownMacro for backward compatibility', () => {
     const markdown = `---
 title: "Test Document"
 useMarkdownMacro: true
@@ -66,10 +68,10 @@ useMarkdownMacro: true
 `;
 
     const { metadata } = parseMarkdownFile(markdown);
-    expect(metadata.macroFormat).toBe('markdown');
+    assert.strictEqual(metadata.macroFormat, 'markdown');
   });
 
-  test('supports legacy useHtmlMacro for backward compatibility', () => {
+  it('supports legacy useHtmlMacro for backward compatibility', () => {
     const markdown = `---
 title: "Test Document"
 useHtmlMacro: true
@@ -79,6 +81,6 @@ useHtmlMacro: true
 `;
 
     const { metadata } = parseMarkdownFile(markdown);
-    expect(metadata.macroFormat).toBe('html');
+    assert.strictEqual(metadata.macroFormat, 'html');
   });
 });
