@@ -12,7 +12,7 @@ export interface ADFEntity {
   [key: string]: unknown;
 }
 
-export type InputFormat = 'markdown' | 'asciidoc' | 'csv';
+export type InputFormat = 'markdown' | 'asciidoc' | 'csv' | 'confluence-markup';
 
 // Extend ConversionOptions to ensure macro options are included
 export interface ExtendedConversionOptions extends ConversionOptions {
@@ -22,6 +22,26 @@ export interface ExtendedConversionOptions extends ConversionOptions {
 
 export interface FormatConverter {
   convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity>;
+}
+
+export class ConfluenceMarkupConverter implements FormatConverter {
+  async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
+    return Promise.resolve({
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'wiki-markup',
+          content: [
+            {
+              type: 'text',
+              text: content,
+            },
+          ],
+        },
+      ],
+    });
+  }
 }
 
 export class AsciiDocConverter implements FormatConverter {
@@ -192,6 +212,8 @@ export async function getConverter(format: InputFormat): Promise<FormatConverter
       return new AsciiDocConverter();
     case 'csv':
       return new CsvConverter();
+    case 'confluence-markup':
+      return new ConfluenceMarkupConverter();
     default:
       return new MarkdownConverter();
   }

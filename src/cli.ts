@@ -55,7 +55,11 @@ program
   .description('Convert a file to ADF format')
   .argument('<input-file>', 'Input file path')
   .option('-o, --output <file>', 'Output file path')
-  .option('-f, --format <format>', 'Input format (markdown, asciidoc, csv)', 'markdown')
+  .option(
+    '-f, --format <format>',
+    'Input format (markdown, asciidoc, csv, confluence-markup)',
+    'markdown'
+  )
   .option('--toc', 'Generate table of contents')
   .option('--inline-cards', 'Parse inline cards')
   .option('--upload-images', 'Upload images to Confluence')
@@ -102,7 +106,11 @@ program
   .option('-s, --space <key>', 'Confluence space key')
   .option('-p, --parent <id>', 'Parent page ID')
   .option('-t, --title <title>', 'Page title')
-  .option('-f, --format <format>', 'Input format (markdown, asciidoc, csv)', 'markdown')
+  .option(
+    '-f, --format <format>',
+    'Input format (markdown, asciidoc, csv, confluence-markup)',
+    'markdown'
+  )
   .option('--toc', 'Generate table of contents')
   .option('--inline-cards', 'Parse inline cards')
   .option('--upload-images', 'Upload images to Confluence')

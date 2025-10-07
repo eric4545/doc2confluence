@@ -283,13 +283,24 @@ export class ConfluenceClient {
       type: 'page',
       title,
       space: { key: spaceKey },
-      body: {
+    };
+
+    if (this.isWikiMarkupADF(content)) {
+      body.body = {
+        wiki: {
+          value: this.extractWikiMarkupContent(content),
+          representation: 'wiki',
+        },
+      };
+    } else {
+      body.body = {
         storage: {
           value: this.convertADFToStorage(content),
           representation: 'storage',
         },
-      },
-    };
+      };
+    }
+
     if (parentId) {
       body.ancestors = [{ id: parentId }];
     }
@@ -313,13 +324,13 @@ export class ConfluenceClient {
     if (!space) {
       throw new Error(`Space with key "${spaceKey}" not found for Cloud page creation.`);
     }
-    this.log(`Found space for Cloud page: ${space.name} (ID: ${space.id})`);
-
-    // For Markdown macro, always use storage format
     let bodyValue: string;
     let representation: string;
-
-    if (this.isMarkdownMacroADF(content)) {
+    if (this.isWikiMarkupADF(content)) {
+      bodyValue = this.extractWikiMarkupContent(content);
+      representation = 'wiki';
+      this.log('Using wiki format for wiki markup');
+    } else if (this.isMarkdownMacroADF(content)) {
       // Extract markdown content and create the macro in storage format
       bodyValue = this.createMarkdownMacroStorage(this.extractMarkdownContent(content));
       representation = 'storage';
@@ -379,14 +390,24 @@ export class ConfluenceClient {
       type: 'page',
       title,
       space: { key: currentPage.space?.key },
-      body: {
+      version: { number: version },
+    };
+
+    if (this.isWikiMarkupADF(content)) {
+      body.body = {
+        wiki: {
+          value: this.extractWikiMarkupContent(content),
+          representation: 'wiki',
+        },
+      };
+    } else {
+      body.body = {
         storage: {
           value: this.convertADFToStorage(content),
           representation: 'storage',
         },
-      },
-      version: { number: version },
-    };
+      };
+    }
     this.log(`Updating server page at: ${endpoint}`);
     this.log(`Request body: ${JSON.stringify(body, null, 2)}`);
     return this._fetchJson(endpoint, {
@@ -408,7 +429,11 @@ export class ConfluenceClient {
     let bodyValue: string;
     let representation: string;
 
-    if (this.isMarkdownMacroADF(content)) {
+    if (this.isWikiMarkupADF(content)) {
+      bodyValue = this.extractWikiMarkupContent(content);
+      representation = 'wiki';
+      this.log('Using wiki format for wiki markup');
+    } else if (this.isMarkdownMacroADF(content)) {
       // Extract markdown content and create the macro in storage format
       bodyValue = this.createMarkdownMacroStorage(this.extractMarkdownContent(content));
       representation = 'storage';
@@ -876,11 +901,39 @@ export class ConfluenceClient {
     );
   }
 
+  private isWikiMarkupADF(adf: ADFEntity): boolean {
+    if (
+      adf.type !== 'doc' ||
+      !adf.content ||
+      !Array.isArray(adf.content) ||
+      adf.content.length !== 1
+    ) {
+      return false;
+    }
+
+    const node = adf.content[0];
+    return node.type === 'wiki-markup';
+  }
+
   /**
    * Extracts the Markdown content from a Markdown macro ADF
    */
   private extractMarkdownContent(adf: ADFEntity): string {
     if (!this.isMarkdownMacroADF(adf)) {
+      return '';
+    }
+
+    const node = adf.content?.[0];
+    if (!node?.content || !Array.isArray(node.content) || node.content.length === 0) {
+      return '';
+    }
+
+    const textNode = node.content[0];
+    return typeof textNode.text === 'string' ? textNode.text : '';
+  }
+
+  private extractWikiMarkupContent(adf: ADFEntity): string {
+    if (!this.isWikiMarkupADF(adf)) {
       return '';
     }
 
@@ -909,6 +962,11 @@ export class ConfluenceClient {
 
     for (const node of nodes) {
       switch (node.type) {
+        case 'wiki-markup': {
+          const wikiContent = this.getRawTextContentFromADFNodes(node.content || []);
+          result += `<![CDATA[${wikiContent}]]>`;
+          break;
+        }
         case 'paragraph':
           result += `<p>${this.processADFNodes(node.content || [])}</p>`;
           break;
