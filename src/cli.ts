@@ -23,6 +23,7 @@ interface ConvertOptions {
   title?: string;
   space?: string;
   parent?: string;
+  pageId?: string;
   macroFormat?: 'markdown' | 'html';
 }
 
@@ -106,6 +107,7 @@ program
   .option('-s, --space <key>', 'Confluence space key')
   .option('-p, --parent <id>', 'Parent page ID')
   .option('-t, --title <title>', 'Page title')
+  .option('--page-id <id>', 'Confluence page ID to update')
   .option(
     '-f, --format <format>',
     'Input format (markdown, asciidoc, csv, confluence-markup)',
@@ -157,7 +159,7 @@ program
         space: undefined,
         parentId: undefined,
         title: options.title,
-        pageId: undefined,
+        pageId: options.pageId,
         labels: [],
         macroFormat: options.macroFormat,
       };
@@ -193,7 +195,7 @@ program
             metadata.space = options.space || frontMatterMetadata.space;
             metadata.parentId = options.parent || frontMatterMetadata.parentId;
             metadata.title = options.title || frontMatterMetadata.title;
-            metadata.pageId = frontMatterMetadata.pageId; // No command line option for pageId
+            metadata.pageId = options.pageId || frontMatterMetadata.pageId;
             metadata.labels = frontMatterMetadata.labels || [];
             // Command line option has priority, then front matter
             metadata.macroFormat =
