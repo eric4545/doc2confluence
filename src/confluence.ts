@@ -911,7 +911,7 @@ export class ConfluenceClient {
     return this._fetchJson(endpoint, {
       method: 'POST',
       headers: form.getHeaders(), // form-data library provides getHeaders()
-      body: form as BodyInit, // Type assertion for fetch compatibility
+      body: form as unknown as BodyInit, // Type assertion for fetch compatibility
     }) as Promise<ImageUploadResponse>;
   }
 
@@ -940,7 +940,7 @@ export class ConfluenceClient {
     return this._fetchJson(endpoint, {
       method: 'POST',
       headers: form.getHeaders(),
-      body: form as BodyInit,
+      body: form as unknown as BodyInit,
     }) as Promise<ImageUploadResponse>;
   }
 
