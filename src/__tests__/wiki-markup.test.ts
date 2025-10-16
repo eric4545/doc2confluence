@@ -193,7 +193,9 @@ describe('Markdown to Wiki Markup Conversion', () => {
       const markdown = '```mermaid\ngraph TD;\n  A-->B;\n```';
       const result = convertMarkdownToWikiMarkup(markdown);
 
-      assert.match(result, /\{mermaid\}/);
+      // Mermaid diagrams should be wrapped in {markdown} macro, not {mermaid}
+      assert.match(result, /\{markdown\}/);
+      assert.match(result, /```mermaid/);
       assert.match(result, /graph TD;/);
       assert.match(result, /A-->B;/);
     });

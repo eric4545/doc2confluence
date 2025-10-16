@@ -2,6 +2,8 @@ import * as marked from 'marked';
 
 /**
  * Converts Markdown content to Confluence Wiki Markup format
+ * Strategy: Use {markdown} blocks for most content to let Confluence render natively,
+ * only convert structural elements that require specific Confluence wiki syntax
  * @param markdown The markdown content to convert
  * @returns The converted Wiki Markup content
  */
@@ -58,7 +60,7 @@ function convertToken(token: marked.Token): string {
     default:
       // For unknown types, try to get raw text
       if ('text' in token && typeof token.text === 'string') {
-        return `${convertInlineText(token.text)}\n\n`;
+        return `${token.text}\n\n`;
       }
       return '';
   }
@@ -66,6 +68,7 @@ function convertToken(token: marked.Token): string {
 
 /**
  * Process inline tokens (for bold, italic, links, etc.)
+ * Converts markdown inline elements to Confluence wiki markup
  */
 function processInlineTokens(tokens: marked.Token[]): string {
   let result = '';
@@ -73,7 +76,7 @@ function processInlineTokens(tokens: marked.Token[]): string {
   for (const token of tokens) {
     switch (token.type) {
       case 'text':
-        result += (token as marked.Tokens.Text).text;
+        result += replaceEmojis((token as marked.Tokens.Text).text);
         break;
       case 'strong':
         result += `*${processInlineTokens((token as marked.Tokens.Strong).tokens || [])}*`;
@@ -86,7 +89,8 @@ function processInlineTokens(tokens: marked.Token[]): string {
         break;
       case 'link': {
         const linkToken = token as marked.Tokens.Link;
-        result += `[${linkToken.text}|${linkToken.href}]`;
+        const linkText = linkToken.tokens ? processInlineTokens(linkToken.tokens) : linkToken.text;
+        result += `[${linkText}|${linkToken.href}]`;
         break;
       }
       case 'image': {
@@ -103,10 +107,14 @@ function processInlineTokens(tokens: marked.Token[]): string {
         result += htmlToken.text.replace(/<br\s*\/?>/gi, '\n');
         break;
       }
+      case 'br':
+        // Handle line breaks
+        result += '\n';
+        break;
       default:
         // Fallback to text property if available
         if ('text' in token && typeof token.text === 'string') {
-          result += token.text;
+          result += replaceEmojis(token.text);
         }
     }
   }
@@ -126,6 +134,7 @@ function convertHeading(token: marked.Tokens.Heading): string {
 
 /**
  * Convert paragraph token to Wiki Markup
+ * For paragraphs with complex formatting, we convert inline elements
  */
 function convertParagraph(token: marked.Tokens.Paragraph): string {
   const text = token.tokens ? processInlineTokens(token.tokens) : token.text;
@@ -150,22 +159,28 @@ function convertList(token: marked.Tokens.List, depth = 0): string {
     if (item.tokens) {
       for (const subToken of item.tokens) {
         if (subToken.type === 'text') {
-          itemText += convertInlineText((subToken as marked.Tokens.Text).text);
+          const textToken = subToken as marked.Tokens.Text;
+          itemText += textToken.tokens ? processInlineTokens(textToken.tokens) : textToken.text;
+        } else if (subToken.type === 'paragraph') {
+          const paraToken = subToken as marked.Tokens.Paragraph;
+          itemText += paraToken.tokens ? processInlineTokens(paraToken.tokens) : paraToken.text;
         } else if (subToken.type === 'list') {
           // Handle nested list
-          result += `${indent} ${itemText}\n`;
+          if (itemText) {
+            result += `${indent} ${itemText}\n`;
+            itemText = '';
+          }
           result += convertList(subToken as marked.Tokens.List, depth + 1);
-          itemText = '';
         } else if ('text' in subToken && typeof subToken.text === 'string') {
-          itemText += convertInlineText(subToken.text);
+          itemText += subToken.text;
         }
       }
     } else {
-      itemText = convertInlineText(item.text);
+      itemText = item.text;
     }
 
     if (itemText) {
-      result += `${indent} ${itemText}\n`;
+      result += `${indent} ${itemText.trim()}\n`;
     }
   }
 
@@ -180,11 +195,18 @@ function convertList(token: marked.Tokens.List, depth = 0): string {
 function convertTable(token: marked.Tokens.Table): string {
   let result = '';
 
+  // Helper to process content for table cells
+  const processCellContent = (text: string): string => {
+    // Preserve newlines in table cells - Confluence handles them correctly
+    // Just trim excess whitespace
+    return text.trim();
+  };
+
   // Convert header row
   if (token.header.length > 0) {
     const headers = token.header.map((cell) => {
       const text = cell.tokens ? processInlineTokens(cell.tokens) : cell.text;
-      return text;
+      return processCellContent(text);
     });
     result += `||${headers.join('||')}||\n`;
   }
@@ -193,7 +215,7 @@ function convertTable(token: marked.Tokens.Table): string {
   for (const row of token.rows) {
     const cells = row.map((cell) => {
       const text = cell.tokens ? processInlineTokens(cell.tokens) : cell.text;
-      return text;
+      return processCellContent(text);
     });
     result += `|${cells.join('|')}|\n`;
   }
@@ -204,14 +226,16 @@ function convertTable(token: marked.Tokens.Table): string {
 /**
  * Convert code block to Wiki Markup
  * Markdown: ```lang ... ``` → Wiki: {code:lang}...{code}
+ * Special case: mermaid diagrams use {markdown} wrapper
  */
 function convertCodeBlock(token: marked.Tokens.Code): string {
   const lang = token.lang || 'none';
   const code = token.text;
 
-  // Special handling for mermaid diagrams
+  // Special handling for mermaid diagrams - wrap in {markdown} macro
+  // Confluence renders mermaid through the markdown macro
   if (lang === 'mermaid') {
-    return `{mermaid}\n${code}\n{mermaid}\n\n`;
+    return `{markdown}\n\`\`\`mermaid\n${code}\n\`\`\`\n{markdown}\n\n`;
   }
 
   return `{code:${lang}}\n${code}\n{code}\n\n`;
@@ -224,43 +248,40 @@ function convertCodeBlock(token: marked.Tokens.Code): string {
 function convertBlockquote(token: marked.Tokens.Blockquote): string {
   let text = '';
   for (const subToken of token.tokens) {
-    if ('text' in subToken && typeof subToken.text === 'string') {
-      text += convertInlineText(subToken.text);
+    if (subToken.type === 'paragraph') {
+      const paraToken = subToken as marked.Tokens.Paragraph;
+      text += paraToken.tokens ? processInlineTokens(paraToken.tokens) : paraToken.text;
+    } else if ('text' in subToken && typeof subToken.text === 'string') {
+      text += subToken.text;
     }
   }
-  return `{quote}\n${text}\n{quote}\n\n`;
+  return `{quote}\n${text.trim()}\n{quote}\n\n`;
 }
 
 /**
- * Convert inline markdown formatting to Wiki Markup
- * This handles: bold, italic, code, links, images
+ * Helper function to replace Unicode emojis with Confluence emoticons
+ * Confluence emoticons are more reliable than Unicode emojis
  */
-function convertInlineText(text: string): string {
+function replaceEmojis(text: string): string {
+  const emojiMap: Record<string, string> = {
+    '✅': '(/)',
+    '❌': '(x)',
+    '⚠️': '(!)',
+    '⚠': '(!)',
+    ℹ️: '(i)',
+    ℹ: '(i)',
+    '⭐': '(*)',
+    '👤': '(i)',
+    '⏱️': '(time)',
+    '⏱': '(time)',
+    '📋': '(-)',
+    '🎫': '(flag)',
+    '🔀': '(?)',
+  };
+
   let result = text;
-
-  // Convert HTML br tags to newlines for multi-line content
-  result = result.replace(/<br\s*\/?>/gi, '\n');
-
-  // Convert images: ![alt](url) → !url!
-  result = result.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '!$2!');
-
-  // Convert links: [text](url) → [text|url]
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '[$1|$2]');
-
-  // Convert inline code first to avoid conflicts: `code` → {{code}}
-  result = result.replace(/`([^`]+)`/g, '{{$1}}');
-
-  // Convert strikethrough: ~~text~~ → -text-
-  result = result.replace(/~~(.+?)~~/g, '-$1-');
-
-  // Convert bold BEFORE italic to avoid conflicts: **text** or __text__ → *text*
-  result = result.replace(/\*\*(.+?)\*\*/g, '*$1*');
-  result = result.replace(/__(.+?)__/g, '*$1*');
-
-  // Convert italic: *text* or _text_ → _text_
-  // Only match single asterisks/underscores (not doubles which are now converted to bold)
-  result = result.replace(/(?<![*_])\*([^*]+?)\*(?![*_])/g, '_$1_');
-  result = result.replace(/(?<![*_])_([^_]+?)_(?![*_])/g, '_$1_');
-
+  for (const [emoji, emoticon] of Object.entries(emojiMap)) {
+    result = result.replace(new RegExp(emoji, 'g'), emoticon);
+  }
   return result;
 }
