@@ -1,6 +1,18 @@
 import * as marked from 'marked';
 
 /**
+ * Removes YAML frontmatter from markdown content
+ * YAML frontmatter is typically delimited by --- at the start and end
+ * @param markdown The markdown content with potential YAML frontmatter
+ * @returns The markdown content without YAML frontmatter
+ */
+function stripYamlFrontmatter(markdown: string): string {
+  // Match YAML frontmatter pattern: starts with ---, ends with ---
+  const yamlFrontmatterRegex = /^---\s*\n([\s\S]*?)\n---\s*\n/;
+  return markdown.replace(yamlFrontmatterRegex, '');
+}
+
+/**
  * Converts Markdown content to Confluence Wiki Markup format
  * Strategy: Use {markdown} blocks for most content to let Confluence render natively,
  * only convert structural elements that require specific Confluence wiki syntax
@@ -8,8 +20,11 @@ import * as marked from 'marked';
  * @returns The converted Wiki Markup content
  */
 export function convertMarkdownToWikiMarkup(markdown: string): string {
+  // Strip YAML frontmatter if present (hide metadata in Confluence)
+  const cleanMarkdown = stripYamlFrontmatter(markdown);
+
   // Parse markdown into tokens
-  const tokens = marked.lexer(markdown);
+  const tokens = marked.lexer(cleanMarkdown);
 
   // Convert tokens to Wiki Markup
   return processTokens(tokens);

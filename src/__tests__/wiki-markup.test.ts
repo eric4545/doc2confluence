@@ -259,4 +259,42 @@ const version = '1.0.0';
       assert.match(result, /\{quote\}/);
     });
   });
+
+  describe('YAML Frontmatter', () => {
+    it('should strip YAML frontmatter from markdown', () => {
+      const markdown = `---
+title: My Document
+author: John Doe
+date: 2024-01-01
+tags: [test, example]
+---
+
+# Heading
+
+This is content.`;
+
+      const result = convertMarkdownToWikiMarkup(markdown);
+
+      // Should not contain YAML frontmatter
+      assert.doesNotMatch(result, /title: My Document/);
+      assert.doesNotMatch(result, /author: John Doe/);
+      assert.doesNotMatch(result, /tags:/);
+
+      // Should contain the actual content
+      assert.match(result, /h1\. Heading/);
+      assert.match(result, /This is content\./);
+    });
+
+    it('should handle markdown without YAML frontmatter', () => {
+      const markdown = `# Heading
+
+This is content without frontmatter.`;
+
+      const result = convertMarkdownToWikiMarkup(markdown);
+
+      // Should work normally
+      assert.match(result, /h1\. Heading/);
+      assert.match(result, /This is content without frontmatter\./);
+    });
+  });
 });
