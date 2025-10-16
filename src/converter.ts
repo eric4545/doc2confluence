@@ -1,11 +1,9 @@
-import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as adfBuilders from '@atlaskit/adf-utils/builders';
 import Ajv from 'ajv';
 import { parse as parseCsv } from 'csv-parse';
 import createDOMPurify from 'dompurify';
-import FormData from 'form-data';
 import { JSDOM } from 'jsdom';
 import * as marked from 'marked';
 import * as showdown from 'showdown';
@@ -25,7 +23,7 @@ const ADF_SCHEMA_PATH = path.join(process.cwd(), 'cache', 'adf-schema.json');
 
 // Initialize DOMPurify with JSDOM (required for Node.js environment)
 const window = new JSDOM('').window;
-const purify = createDOMPurify(window);
+const _purify = createDOMPurify(window);
 
 export interface ConversionOptions {
   expandMacros?: boolean;
@@ -87,7 +85,7 @@ export class Converter {
         const cachedSchema = await fs.readFile(ADF_SCHEMA_PATH, 'utf-8');
         this.adfSchema = JSON.parse(cachedSchema);
         return this.adfSchema;
-      } catch (err) {
+      } catch (_err) {
         // Cache file doesn't exist, download it
         console.log('Downloading official ADF schema...');
         const response = await fetch(ADF_SCHEMA_URL);
@@ -757,8 +755,8 @@ export class Converter {
         rowContent.push({
           type: isHeader ? 'tableHeader' : 'tableCell',
           attrs: {
-            colspan: Number.parseInt(cell.getAttribute('colspan') || '1'),
-            rowspan: Number.parseInt(cell.getAttribute('rowspan') || '1'),
+            colspan: Number.parseInt(cell.getAttribute('colspan') || '1', 10),
+            rowspan: Number.parseInt(cell.getAttribute('rowspan') || '1', 10),
             background: null,
           },
           content: this.parseInlineContent(cell.textContent || '', {}),
@@ -861,7 +859,7 @@ export class Converter {
   }
 
   private parseCsvToTable(content: string, options: CsvOptions): Promise<ADFEntity> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       // If content is empty or whitespace only, return empty table
       if (!content || content.trim() === '') {
         resolve({
@@ -978,7 +976,7 @@ export class Converter {
   /**
    * Process task item content to handle formatting
    */
-  private processTaskItemContent(text: string, options: ConversionOptions): ADFEntity[] {
+  private processTaskItemContent(text: string, _options: ConversionOptions): ADFEntity[] {
     console.log('Processing task item content:', text);
 
     // Check for different formatting types

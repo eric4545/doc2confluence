@@ -1,7 +1,4 @@
 import { createReadStream } from 'node:fs';
-import { ReadStream } from 'node:fs';
-import path from 'node:path';
-import { Readable } from 'node:stream';
 // Import FormData dynamically to make testing easier
 // This will be mocked in tests
 import type { default as FormDataType } from 'form-data';
@@ -210,7 +207,7 @@ export class ConfluenceClient {
       let errorData: unknown;
       try {
         errorData = JSON.parse(errorText);
-      } catch (e) {
+      } catch (_e) {
         errorData = { message: errorText };
       }
 
@@ -681,7 +678,7 @@ export class ConfluenceClient {
         try {
           existingPage = await this.getPage(pageId);
           this.log(`Found page by ID ${pageId}`);
-        } catch (error) {
+        } catch (_error) {
           this.log(`Could not find page with ID ${pageId}, will search by title`);
         }
       }

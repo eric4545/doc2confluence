@@ -6,7 +6,10 @@
   "bin": {
     "doc2conf": "dist/cli.js"
   },
-  "files": ["dist/", "README.md"],
+  "files": [
+    "dist/",
+    "README.md"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/eric4545/doc2confluence.git"
@@ -15,7 +18,15 @@
   "bugs": {
     "url": "https://github.com/eric4545/doc2confluence/issues"
   },
-  "keywords": ["confluence", "markdown", "asciidoc", "csv", "documentation", "adf", "atlassian"],
+  "keywords": [
+    "confluence",
+    "markdown",
+    "asciidoc",
+    "csv",
+    "documentation",
+    "adf",
+    "atlassian"
+  ],
   "author": "Eric Ng",
   "license": "MIT",
   "scripts": {
@@ -50,7 +61,7 @@
     "showdown": "^2.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "1.9.4",
+    "@biomejs/biome": "^2.2.4",
     "@types/ajv": "^1.0.0",
     "@types/dompurify": "^3.0.5",
     "@types/dotenv": "^8.2.0",

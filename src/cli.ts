@@ -4,10 +4,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Command } from 'commander';
 import { getConfluenceConfig, getParentPageId, validateSpaceKey } from './config';
-import { ConfluenceClient } from './confluence';
 import type { ConfluenceInstanceType } from './confluence';
-import { Converter } from './converter';
-import { type InputFormat, convertFile } from './formats';
+import { ConfluenceClient } from './confluence';
+import { convertFile, type InputFormat } from './formats';
 import { parseMarkdownFile } from './metadata';
 import type { ADFEntity } from './types';
 import { formatValidationResults, validateWikiMarkup } from './wiki-markup-validator';
@@ -283,15 +282,13 @@ program
       const pageIdParam = metadata.pageId ? String(metadata.pageId) : undefined;
 
       // Determine content format based on file type and content
-      let contentFormat: 'adf' | 'wiki' | 'storage' = 'adf';
-      let contentData: ADFEntity | string = adf;
+      let content: { format: 'adf'; data: ADFEntity } | { format: 'wiki'; data: string };
 
       // Check if this is raw wiki markup (.confluence or .wiki files)
       if (file.endsWith('.confluence') || file.endsWith('.wiki')) {
         // For .confluence files, read the raw content directly
         const wikiContent = await fs.readFile(file, 'utf-8');
-        contentFormat = 'wiki';
-        contentData = wikiContent;
+        content = { format: 'wiki', data: wikiContent };
 
         if (isDebugMode) {
           console.log('DEBUG: Detected raw wiki markup file, using wiki format');
@@ -310,12 +307,14 @@ program
 
           console.log('\n⚠️  Proceeding with warnings...\n');
         }
+      } else {
+        content = { format: 'adf', data: adf };
       }
 
       const pageId = await client.createOrUpdatePage({
         spaceKey,
         title: pageTitle,
-        content: { format: contentFormat, data: contentData },
+        content,
         parentId,
         pageId: pageIdParam,
         labels: metadata.labels,

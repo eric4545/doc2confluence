@@ -1,10 +1,10 @@
 import fs from 'node:fs/promises';
 import asciidoctor from 'asciidoctor';
 import { parse as parseCsv } from 'csv-parse';
-import { Converter } from '../converter';
 import type { ConversionOptions } from '../converter';
+import { Converter } from '../converter';
 import { convertMarkdownToWikiMarkup } from '../markdown-to-wiki';
-import { parseMarkdownFile, validateMetadata } from '../metadata';
+import { parseMarkdownFile } from '../metadata';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
@@ -26,7 +26,7 @@ export interface FormatConverter {
 }
 
 export class ConfluenceMarkupConverter implements FormatConverter {
-  async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
+  async convert(content: string, _options: ExtendedConversionOptions): Promise<ADFEntity> {
     // Convert Markdown to Confluence Wiki Markup
     const wikiMarkup = convertMarkdownToWikiMarkup(content);
 
@@ -76,8 +76,8 @@ export class AsciiDocConverter implements FormatConverter {
 }
 
 export class CsvConverter implements FormatConverter {
-  async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
-    return new Promise((resolve, reject) => {
+  async convert(content: string, _options: ExtendedConversionOptions): Promise<ADFEntity> {
+    return new Promise((resolve, _reject) => {
       // If content is empty or whitespace only, return empty table
       if (!content || content.trim() === '') {
         resolve({

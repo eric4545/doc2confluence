@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { ConfluenceClient } from '../confluence';
 
 // Mock FormData
-const MockFormData = mock.fn(() => ({
+const _MockFormData = mock.fn(() => ({
   append: mock.fn(),
   pipe: mock.fn(),
   getBoundary: mock.fn(),
@@ -16,9 +16,6 @@ const MockFormData = mock.fn(() => ({
     'Content-Type': 'multipart/form-data; boundary=boundary',
   })),
 }));
-
-// Import fs for mocking
-import * as fs from 'node:fs';
 
 // Mock global fetch
 const mockFetch = mock.fn();

@@ -25,7 +25,7 @@ function fixMalformedMermaidBlocks(wikiMarkup: string): string {
   // Find all occurrences of {markdown}...{markdown} blocks
   const mermaidBlockRegex = /\{markdown\}([\s\S]*?)\{markdown\}/g;
 
-  return wikiMarkup.replace(mermaidBlockRegex, (match, content) => {
+  return wikiMarkup.replace(mermaidBlockRegex, (_match, content) => {
     // Remove any {code:none}, {code:...}, or {code} tags from within the mermaid block
     const cleaned = content
       .replace(/\{code:none\}/g, '')
