@@ -137,27 +137,32 @@ doc2conf convert docs/example.md --toc
 doc2conf push docs/example.md --space TEAM
 ```
 
-4. **Using Macro Format Instead of ADF Conversion**:
+4. **Using Different Format Options**:
+
+There are several ways to convert your Markdown:
+
 ```bash
-# Use Markdown macro - keeps original Markdown format
+# Default: Native ADF conversion (fully editable in Confluence)
+doc2conf push docs/example.md
+
+# Confluence Wiki Markup format (converts MD → Wiki Markup)
+doc2conf push docs/example.md --format confluence-markup
+
+# Markdown macro - keeps original Markdown format
 doc2conf push docs/example.md --macro-format markdown
 
-# Use HTML macro - converts to HTML for better table rendering
+# HTML macro - converts to HTML for better table rendering
 doc2conf push docs/example.md --macro-format html
 ```
 
-The macro format option creates a Confluence page with a macro instead of converting to native ADF:
+**Format Comparison**:
 
-**Markdown Macro** (`--macro-format markdown`):
-- Preserves exact Markdown syntax
-- Editable as Markdown in Confluence
-- Best for: maintaining source format, simple content
-
-**HTML Macro** (`--macro-format html`):
-- Converts Markdown to HTML using Showdown library
-- Superior table rendering with multi-line content support
-- Comprehensive Markdown feature support (emoji, task lists, etc.)
-- Best for: complex tables, rich formatting requirements
+| Option | Syntax | Best For | Editable in Confluence |
+|--------|--------|----------|------------------------|
+| **Default (ADF)** | Native ADF | Standard content, simple tables | ✅ Fully editable |
+| **`--format confluence-markup`** | Markdown → Wiki Markup | Complex tables, legacy compatibility | ✅ As wiki markup |
+| **`--macro-format markdown`** | Preserved Markdown | Maintaining source, requires plugin | ✅ As Markdown |
+| **`--macro-format html`** | Markdown → HTML | Best rendering for complex content | ❌ View only |
 
 You can also set this in your frontmatter:
 ```markdown
@@ -165,6 +170,8 @@ You can also set this in your frontmatter:
 macroFormat: html  # or 'markdown'
 ---
 ```
+
+See [Confluence Markup Format documentation](docs/CONFLUENCE_MARKUP_FORMAT.md) for detailed information on the `--format confluence-markup` option.
 
 5. **Using Inline CSV Data**:
 ```markdown
@@ -419,6 +426,9 @@ doc2conf push input.md
 
 # Push to Confluence Server/Data Center
 doc2conf push input.md --instance-type server
+
+# Convert Markdown to Confluence Wiki Markup
+doc2conf push input.md --format confluence-markup
 ```
 
 ### CSV Import in Markdown

@@ -58,7 +58,7 @@ program
   .option('-o, --output <file>', 'Output file path')
   .option(
     '-f, --format <format>',
-    'Input format (markdown, asciidoc, csv, confluence-markup)',
+    'Input format: markdown (default), asciidoc, csv, or confluence-markup (converts markdown to wiki markup)',
     'markdown'
   )
   .option('--toc', 'Generate table of contents')
@@ -110,7 +110,7 @@ program
   .option('--page-id <id>', 'Confluence page ID to update')
   .option(
     '-f, --format <format>',
-    'Input format (markdown, asciidoc, csv, confluence-markup)',
+    'Input format: markdown (default), asciidoc, csv, or confluence-markup (converts markdown to wiki markup)',
     'markdown'
   )
   .option('--toc', 'Generate table of contents')

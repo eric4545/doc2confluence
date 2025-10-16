@@ -3,6 +3,7 @@ import asciidoctor from 'asciidoctor';
 import { parse as parseCsv } from 'csv-parse';
 import { Converter } from '../converter';
 import type { ConversionOptions } from '../converter';
+import { convertMarkdownToWikiMarkup } from '../markdown-to-wiki';
 import { parseMarkdownFile, validateMetadata } from '../metadata';
 
 // Define ADFEntity type since we can't import it
@@ -26,6 +27,9 @@ export interface FormatConverter {
 
 export class ConfluenceMarkupConverter implements FormatConverter {
   async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
+    // Convert Markdown to Confluence Wiki Markup
+    const wikiMarkup = convertMarkdownToWikiMarkup(content);
+
     return Promise.resolve({
       type: 'doc',
       version: 1,
@@ -35,7 +39,7 @@ export class ConfluenceMarkupConverter implements FormatConverter {
           content: [
             {
               type: 'text',
-              text: content,
+              text: wikiMarkup,
             },
           ],
         },
