@@ -13,6 +13,30 @@ function stripYamlFrontmatter(markdown: string): string {
 }
 
 /**
+ * Fixes malformed mermaid blocks that have {code:none} or {code} tags injected
+ * This can happen when the markdown parser incorrectly splits a mermaid code block
+ * @param wikiMarkup The wiki markup to fix
+ * @returns The fixed wiki markup
+ */
+function fixMalformedMermaidBlocks(wikiMarkup: string): string {
+  // Pattern: {markdown}...{code:none}...{code}...{code:none}...{markdown}
+  // We want to remove the {code:none} and {code} tags that appear between {markdown} tags
+
+  // Find all occurrences of {markdown}...{markdown} blocks
+  const mermaidBlockRegex = /\{markdown\}([\s\S]*?)\{markdown\}/g;
+
+  return wikiMarkup.replace(mermaidBlockRegex, (match, content) => {
+    // Remove any {code:none}, {code:...}, or {code} tags from within the mermaid block
+    const cleaned = content
+      .replace(/\{code:none\}/g, '')
+      .replace(/\{code:[^}]+\}/g, '')
+      .replace(/\{code\}/g, '');
+
+    return `{markdown}${cleaned}{markdown}`;
+  });
+}
+
+/**
  * Converts Markdown content to Confluence Wiki Markup format
  * Strategy: Use {markdown} blocks for most content to let Confluence render natively,
  * only convert structural elements that require specific Confluence wiki syntax
@@ -23,11 +47,18 @@ export function convertMarkdownToWikiMarkup(markdown: string): string {
   // Strip YAML frontmatter if present (hide metadata in Confluence)
   const cleanMarkdown = stripYamlFrontmatter(markdown);
 
-  // Parse markdown into tokens
-  const tokens = marked.lexer(cleanMarkdown);
+  // Parse markdown into tokens with options to preserve code blocks
+  const tokens = marked.lexer(cleanMarkdown, {
+    gfm: true,
+    breaks: false,
+    pedantic: false,
+  });
 
   // Convert tokens to Wiki Markup
-  return processTokens(tokens);
+  const result = processTokens(tokens);
+
+  // Post-process to fix malformed mermaid blocks with {code:none} injections
+  return fixMalformedMermaidBlocks(result);
 }
 
 /**

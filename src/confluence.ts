@@ -70,6 +70,32 @@ export interface ConfluenceSpaceResponse {
  */
 export type ConfluenceInstanceType = 'cloud' | 'server';
 
+/**
+ * Content format types for Confluence pages
+ */
+export type PageContent =
+  | { format: 'adf'; data: ADFEntity }
+  | { format: 'wiki'; data: string }
+  | { format: 'storage'; data: string };
+
+/**
+ * Options for creating or updating a Confluence page
+ */
+export interface CreateOrUpdatePageOptions {
+  spaceKey: string;
+  title: string;
+  content: PageContent;
+  parentId?: string;
+  pageId?: string;
+  labels?: string[];
+}
+
+interface ExtensionAttrs {
+  extensionType?: string;
+  extensionKey?: string;
+  parameters?: Record<string, unknown>;
+}
+
 export class ConfluenceClient {
   private baseUrl: string;
   private email: string;
@@ -157,7 +183,7 @@ export class ConfluenceClient {
     }
   }
 
-  private async _fetchJson(url: string, fetchOptions: RequestInit = {}): Promise<any> {
+  private async _fetchJson(url: string, fetchOptions: RequestInit = {}): Promise<unknown> {
     // Ensure headers from getAuthHeaders are merged with any provided in fetchOptions
     const headers = {
       ...this.getAuthHeaders(),
@@ -249,7 +275,7 @@ export class ConfluenceClient {
     const params = new URLSearchParams({ spaceKey: spaceKey });
     const url = `${endpoint}?${params}`;
     this.log(`Fetching server space information for key ${spaceKey} at: ${url}`);
-    const result = await this._fetchJson(url);
+    const result = (await this._fetchJson(url)) as ConfluenceSpaceResponse;
     // Server API for /space?spaceKey=X returns a list
     return result.results?.[0] || null;
   }
@@ -310,7 +336,7 @@ export class ConfluenceClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    }) as Promise<ConfluenceResponse>;
   }
 
   private async _createPageCloud(
@@ -360,7 +386,7 @@ export class ConfluenceClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    }) as Promise<ConfluenceResponse>;
   }
 
   // Update createPage to use spaceId
@@ -414,7 +440,7 @@ export class ConfluenceClient {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    }) as Promise<ConfluenceResponse>;
   }
 
   private async _updatePageCloud(
@@ -463,7 +489,7 @@ export class ConfluenceClient {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    }) as Promise<ConfluenceResponse>;
   }
 
   async updatePage(
@@ -482,13 +508,13 @@ export class ConfluenceClient {
   private async _getPageServer(pageId: string): Promise<ConfluenceResponse> {
     const endpoint = this.buildApiEndpoint(`/content/${pageId}?expand=space,version,body.storage`);
     this.log(`Getting server page from: ${endpoint}`);
-    return this._fetchJson(endpoint);
+    return this._fetchJson(endpoint) as Promise<ConfluenceResponse>;
   }
 
   private async _getPageCloud(pageId: string): Promise<ConfluenceResponse> {
     const endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
     this.log(`Getting cloud page from: ${endpoint}`);
-    return this._fetchJson(endpoint);
+    return this._fetchJson(endpoint) as Promise<ConfluenceResponse>;
   }
 
   async getPage(pageId: string): Promise<ConfluenceResponse> {
@@ -524,7 +550,7 @@ export class ConfluenceClient {
       status: 'current',
     });
     this.log(`Searching for server page at: ${endpoint}?${params}`);
-    const data = await this._fetchJson(`${endpoint}?${params}`);
+    const data = (await this._fetchJson(`${endpoint}?${params}`)) as ConfluenceSearchResponse;
     const results: ConfluenceResponse[] = data.results || [];
 
     if (!results || results.length === 0) return null;
@@ -610,19 +636,45 @@ export class ConfluenceClient {
 
   /**
    * Creates or updates a page in Confluence
+   * Supports both new options object and legacy parameter signature
    */
   async createOrUpdatePage(
-    spaceKey: string,
-    title: string,
-    content: ADFEntity,
+    spaceKeyOrOptions: string | CreateOrUpdatePageOptions,
+    title?: string,
+    content?: ADFEntity,
     parentId?: string,
     pageId?: string,
     labels?: string[]
   ): Promise<unknown> {
+    // Handle both new and old signatures
+    if (typeof spaceKeyOrOptions === 'object') {
+      // New signature: options object
+      return this._createOrUpdatePageImpl(spaceKeyOrOptions);
+    }
+    // Old signature: individual parameters (backward compatibility)
+    if (!title || !content) {
+      throw new Error('title and content are required when using legacy signature');
+    }
+    return this._createOrUpdatePageImpl({
+      spaceKey: spaceKeyOrOptions,
+      title,
+      content: { format: 'adf', data: content },
+      parentId,
+      pageId,
+      labels,
+    });
+  }
+
+  /**
+   * Internal implementation of createOrUpdatePage
+   */
+  private async _createOrUpdatePageImpl(options: CreateOrUpdatePageOptions): Promise<unknown> {
+    const { spaceKey, title, content, parentId, pageId, labels } = options;
+
     this.log(`Creating or updating page "${title}" in space "${spaceKey}"`);
 
     try {
-      let existingPage = null;
+      let existingPage: ConfluenceResponse | null = null;
 
       // If pageId is provided, try to get the page directly
       if (pageId) {
@@ -640,17 +692,20 @@ export class ConfluenceClient {
         existingPage = await this.getPageByTitle(spaceKey, title, parentId);
       }
 
+      // Convert PageContent to ADFEntity for internal methods
+      const adfContent = this._convertToADFEntity(content);
+
       let result: ConfluenceResponse | null = null;
       if (existingPage) {
         // Update existing page
         this.log(`Page "${title}" exists with ID ${existingPage.id}, updating...`);
         const currentVersion = existingPage.version?.number || 1;
-        result = await this.updatePage(existingPage.id, title, content, currentVersion + 1);
+        result = await this.updatePage(existingPage.id, title, adfContent, currentVersion + 1);
       } else {
         try {
           // Create new page
           this.log(`Page "${title}" does not exist, creating new page...`);
-          result = await this.createPage(spaceKey, title, content, parentId);
+          result = await this.createPage(spaceKey, title, adfContent, parentId);
         } catch (error: unknown) {
           // Improve error handling for duplicate title scenarios
           if (error instanceof Error && error.message?.includes('title already exists')) {
@@ -693,6 +748,47 @@ export class ConfluenceClient {
     }
   }
 
+  /**
+   * Converts PageContent to ADFEntity for internal processing
+   */
+  private _convertToADFEntity(content: PageContent): ADFEntity {
+    switch (content.format) {
+      case 'wiki':
+        // Wrap wiki markup in the wiki-markup node structure
+        return {
+          type: 'doc',
+          version: 1,
+          content: [
+            {
+              type: 'wiki-markup',
+              content: [
+                {
+                  type: 'text',
+                  text: content.data,
+                },
+              ],
+            },
+          ],
+        };
+      case 'storage':
+        // For storage format, we need to wrap it similarly
+        // The existing code will convert it back to storage format
+        return {
+          type: 'doc',
+          version: 1,
+          content: [
+            {
+              type: 'text',
+              text: content.data,
+            },
+          ],
+        };
+      default:
+        // Already in ADF format
+        return content.data;
+    }
+  }
+
   private async _addLabelsToServerPage(pageId: string, labels: string[]): Promise<unknown> {
     const endpoint = this.buildApiEndpoint(`/content/${pageId}/label`);
     const body = labels.map((label) => ({ prefix: 'global', name: label }));
@@ -729,7 +825,9 @@ export class ConfluenceClient {
       expand: 'version',
     });
     this.log(`Searching for cloud content (v1 API): ${contentSearchEndpoint}?${params}`);
-    const contentResults = await this._fetchJson(`${contentSearchEndpoint}?${params}`);
+    const contentResults = (await this._fetchJson(
+      `${contentSearchEndpoint}?${params}`
+    )) as ConfluenceSearchResponse;
 
     if (!contentResults.results || contentResults.results.length === 0) {
       throw new Error(
@@ -761,7 +859,7 @@ export class ConfluenceClient {
   private async _getSpaceByIdServer(spaceId: string): Promise<ConfluenceSpace | null> {
     const endpoint = this.buildApiEndpoint('/space');
     this.log(`Fetching server spaces to find ID ${spaceId} at: ${endpoint}`);
-    const result = await this._fetchJson(endpoint);
+    const result = (await this._fetchJson(endpoint)) as ConfluenceSpaceResponse;
     const spaces: ConfluenceSpace[] = result.results || [];
     return spaces.find((s) => s.id.toString() === spaceId.toString()) || null;
   }
@@ -813,8 +911,8 @@ export class ConfluenceClient {
     return this._fetchJson(endpoint, {
       method: 'POST',
       headers: form.getHeaders(), // form-data library provides getHeaders()
-      body: form as any, // Type assertion for fetch compatibility
-    });
+      body: form as BodyInit, // Type assertion for fetch compatibility
+    }) as Promise<ImageUploadResponse>;
   }
 
   private async _uploadImageCloud(
@@ -842,8 +940,8 @@ export class ConfluenceClient {
     return this._fetchJson(endpoint, {
       method: 'POST',
       headers: form.getHeaders(),
-      body: form as any,
-    });
+      body: form as BodyInit,
+    }) as Promise<ImageUploadResponse>;
   }
 
   async uploadImage(
@@ -890,14 +988,13 @@ export class ConfluenceClient {
     }
 
     const node = adf.content[0];
+    const attrs = node.attrs as ExtensionAttrs;
     return (
       node.type === 'extension' &&
-      typeof node.attrs === 'object' &&
-      node.attrs !== null &&
-      typeof (node.attrs as any).extensionType === 'string' &&
-      (node.attrs as any).extensionType === 'com.atlassian.confluence.macro.core' &&
-      typeof (node.attrs as any).extensionKey === 'string' &&
-      (node.attrs as any).extensionKey === 'markdown'
+      typeof attrs === 'object' &&
+      attrs !== null &&
+      attrs.extensionType === 'com.atlassian.confluence.macro.core' &&
+      attrs.extensionKey === 'markdown'
     );
   }
 
@@ -1121,13 +1218,7 @@ export class ConfluenceClient {
         }
         case 'extension': {
           // Handle extension macros like markdown
-          const extAttrs = node.attrs as
-            | {
-                extensionType?: string;
-                extensionKey?: string;
-                parameters?: Record<string, unknown>;
-              }
-            | undefined;
+          const extAttrs = node.attrs as ExtensionAttrs | undefined;
           if (extAttrs?.extensionType === 'com.atlassian.confluence.macro.core') {
             if (extAttrs.extensionKey === 'markdown') {
               // Special handling for markdown macro

@@ -10,6 +10,7 @@ import { Converter } from './converter';
 import { type InputFormat, convertFile } from './formats';
 import { parseMarkdownFile } from './metadata';
 import type { ADFEntity } from './types';
+import { formatValidationResults, validateWikiMarkup } from './wiki-markup-validator';
 
 interface ConvertOptions {
   dryRun?: boolean;
@@ -281,14 +282,44 @@ program
       // Use pageId from metadata if available
       const pageIdParam = metadata.pageId ? String(metadata.pageId) : undefined;
 
-      const pageId = await client.createOrUpdatePage(
+      // Determine content format based on file type and content
+      let contentFormat: 'adf' | 'wiki' | 'storage' = 'adf';
+      let contentData: ADFEntity | string = adf;
+
+      // Check if this is raw wiki markup (.confluence or .wiki files)
+      if (file.endsWith('.confluence') || file.endsWith('.wiki')) {
+        // For .confluence files, read the raw content directly
+        const wikiContent = await fs.readFile(file, 'utf-8');
+        contentFormat = 'wiki';
+        contentData = wikiContent;
+
+        if (isDebugMode) {
+          console.log('DEBUG: Detected raw wiki markup file, using wiki format');
+        }
+
+        // Validate wiki markup
+        const validationResult = validateWikiMarkup(wikiContent);
+        if (!validationResult.valid || validationResult.warnings.length > 0) {
+          console.log('\n⚠️  Wiki Markup Validation Issues:\n');
+          console.log(formatValidationResults(validationResult));
+
+          if (!validationResult.valid) {
+            console.log('\n❌ Validation failed. Please fix the errors above before pushing.');
+            process.exit(1);
+          }
+
+          console.log('\n⚠️  Proceeding with warnings...\n');
+        }
+      }
+
+      const pageId = await client.createOrUpdatePage({
         spaceKey,
-        pageTitle,
-        adf,
+        title: pageTitle,
+        content: { format: contentFormat, data: contentData },
         parentId,
-        pageIdParam,
-        metadata.labels
-      );
+        pageId: pageIdParam,
+        labels: metadata.labels,
+      });
 
       if (isDebugMode) {
         console.log('DEBUG: Response from createOrUpdatePage:', pageId);
