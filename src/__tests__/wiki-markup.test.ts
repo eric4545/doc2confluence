@@ -1,29 +1,30 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import { convertMarkdownToWikiMarkup } from '../markdown-to-wiki';
+import { loadMarkdownFixture } from './test-helpers';
 
 describe('Markdown to Wiki Markup Conversion', () => {
   describe('Headings', () => {
     it('should convert h1 heading', () => {
-      const markdown = '# Heading 1';
+      const markdown = loadMarkdownFixture('headings/h1.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'h1. Heading 1');
     });
 
     it('should convert h2 heading', () => {
-      const markdown = '## Heading 2';
+      const markdown = loadMarkdownFixture('headings/h2.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'h2. Heading 2');
     });
 
     it('should convert h3 heading', () => {
-      const markdown = '### Heading 3';
+      const markdown = loadMarkdownFixture('headings/h3.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'h3. Heading 3');
     });
 
     it('should convert heading with inline formatting', () => {
-      const markdown = '# Heading with **bold** text';
+      const markdown = loadMarkdownFixture('headings/with-bold-text.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'h1. Heading with *bold* text');
     });
@@ -31,13 +32,13 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Paragraphs', () => {
     it('should convert simple paragraph', () => {
-      const markdown = 'This is a paragraph.';
+      const markdown = loadMarkdownFixture('paragraphs/simple.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'This is a paragraph.');
     });
 
     it('should convert multiple paragraphs', () => {
-      const markdown = 'First paragraph.\n\nSecond paragraph.';
+      const markdown = loadMarkdownFixture('paragraphs/multiple.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.match(result, /First paragraph\.\s+Second paragraph\./);
     });
@@ -45,31 +46,31 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Inline Formatting', () => {
     it('should convert bold with **', () => {
-      const markdown = 'This is **bold** text.';
+      const markdown = loadMarkdownFixture('inline/bold-asterisk.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'This is *bold* text.');
     });
 
     it('should convert bold with __', () => {
-      const markdown = 'This is __bold__ text.';
+      const markdown = loadMarkdownFixture('inline/bold-underscore.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'This is *bold* text.');
     });
 
     it('should convert italic', () => {
-      const markdown = 'This is *italic* text.';
+      const markdown = loadMarkdownFixture('inline/italic.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'This is _italic_ text.');
     });
 
     it('should convert inline code', () => {
-      const markdown = 'This is `code` text.';
+      const markdown = loadMarkdownFixture('inline/code.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'This is {{code}} text.');
     });
 
     it('should convert strikethrough', () => {
-      const markdown = 'This is ~~strikethrough~~ text.';
+      const markdown = loadMarkdownFixture('inline/strikethrough.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'This is -strikethrough- text.');
     });
@@ -77,13 +78,13 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Links and Images', () => {
     it('should convert markdown link', () => {
-      const markdown = 'Check out [this link](https://example.com).';
+      const markdown = loadMarkdownFixture('links/link.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'Check out [this link|https://example.com].');
     });
 
     it('should convert markdown image', () => {
-      const markdown = 'Here is an image: ![alt text](image.png)';
+      const markdown = loadMarkdownFixture('links/image.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.strictEqual(result, 'Here is an image: !image.png!');
     });
@@ -91,9 +92,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Lists', () => {
     it('should convert unordered list', () => {
-      const markdown = `- Item 1
-- Item 2
-- Item 3`;
+      const markdown = loadMarkdownFixture('lists/unordered.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.match(result, /\* Item 1/);
       assert.match(result, /\* Item 2/);
@@ -101,9 +100,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
     });
 
     it('should convert ordered list', () => {
-      const markdown = `1. First
-2. Second
-3. Third`;
+      const markdown = loadMarkdownFixture('lists/ordered.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.match(result, /# First/);
       assert.match(result, /# Second/);
@@ -111,10 +108,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
     });
 
     it('should convert nested list', () => {
-      const markdown = `- Item 1
-  - Nested 1
-  - Nested 2
-- Item 2`;
+      const markdown = loadMarkdownFixture('lists/nested.md');
       const result = convertMarkdownToWikiMarkup(markdown);
       assert.match(result, /\* Item 1/);
       assert.match(result, /\*\* Nested 1/);
@@ -125,10 +119,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Tables', () => {
     it('should convert simple table', () => {
-      const markdown = `| Header 1 | Header 2 |
-|----------|----------|
-| Cell 1   | Cell 2   |
-| Cell 3   | Cell 4   |`;
+      const markdown = loadMarkdownFixture('tables/simple.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       // Check for wiki markup table syntax
@@ -138,9 +129,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
     });
 
     it('should convert table with inline formatting', () => {
-      const markdown = `| Header | Value |
-|--------|-------|
-| **Bold** | *Italic* |`;
+      const markdown = loadMarkdownFixture('tables/with-formatting.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       assert.match(result, /\|\|Header\|\|Value\|\|/);
@@ -148,9 +137,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
     });
 
     it('should convert table with multiple columns', () => {
-      const markdown = `| Col1 | Col2 | Col3 | Col4 |
-|------|------|------|------|
-| A    | B    | C    | D    |`;
+      const markdown = loadMarkdownFixture('tables/multi-column.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       assert.match(result, /\|\|Col1\|\|Col2\|\|Col3\|\|Col4\|\|/);
@@ -158,9 +145,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
     });
 
     it('should convert br tags to newlines in table cells', () => {
-      const markdown = `| Header 1 | Header 2 |
-|----------|----------|
-| Line 1<br>Line 2 | Cell B |`;
+      const markdown = loadMarkdownFixture('tables/with-br-tags.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       // Check table structure is pure wiki markup
@@ -172,7 +157,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Code Blocks', () => {
     it('should convert code block with language', () => {
-      const markdown = '```javascript\nconst x = 1;\n```';
+      const markdown = loadMarkdownFixture('code/javascript.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       assert.match(result, /\{code:javascript\}/);
@@ -181,7 +166,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
     });
 
     it('should convert code block without language', () => {
-      const markdown = '```\nplain text\n```';
+      const markdown = loadMarkdownFixture('code/no-lang.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       assert.match(result, /\{code:none\}/);
@@ -190,7 +175,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
     });
 
     it('should convert mermaid diagram', () => {
-      const markdown = '```mermaid\ngraph TD;\n  A-->B;\n```';
+      const markdown = loadMarkdownFixture('code/mermaid.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       // Mermaid diagrams should be wrapped in {markdown} macro, not {mermaid}
@@ -203,7 +188,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Blockquotes', () => {
     it('should convert blockquote', () => {
-      const markdown = '> This is a quote';
+      const markdown = loadMarkdownFixture('blockquote.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       assert.match(result, /\{quote\}/);
@@ -213,7 +198,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Horizontal Rule', () => {
     it('should convert horizontal rule', () => {
-      const markdown = 'Text before\n\n---\n\nText after';
+      const markdown = loadMarkdownFixture('horizontal-rule.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       assert.match(result, /----/);
@@ -222,30 +207,7 @@ describe('Markdown to Wiki Markup Conversion', () => {
 
   describe('Complex Document', () => {
     it('should convert a complex document with mixed elements', () => {
-      const markdown = `# Release Notes
-
-## Overview
-
-This release includes **important** updates.
-
-### Features
-
-- Feature 1
-- Feature 2 with [link](https://example.com)
-
-### Changes
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| API       | **Updated** | See docs |
-| UI        | *New* | Redesigned |
-
-\`\`\`javascript
-const version = '1.0.0';
-\`\`\`
-
-> Remember to test thoroughly!`;
-
+      const markdown = loadMarkdownFixture('complex-document.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       // Verify key elements are converted
@@ -262,17 +224,7 @@ const version = '1.0.0';
 
   describe('YAML Frontmatter', () => {
     it('should strip YAML frontmatter from markdown', () => {
-      const markdown = `---
-title: My Document
-author: John Doe
-date: 2024-01-01
-tags: [test, example]
----
-
-# Heading
-
-This is content.`;
-
+      const markdown = loadMarkdownFixture('yaml-frontmatter.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       // Should not contain YAML frontmatter
@@ -286,10 +238,7 @@ This is content.`;
     });
 
     it('should handle markdown without YAML frontmatter', () => {
-      const markdown = `# Heading
-
-This is content without frontmatter.`;
-
+      const markdown = loadMarkdownFixture('yaml-no-frontmatter.md');
       const result = convertMarkdownToWikiMarkup(markdown);
 
       // Should work normally
