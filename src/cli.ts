@@ -25,6 +25,7 @@ interface ConvertOptions {
   parent?: string;
   pageId?: string;
   macroFormat?: 'markdown' | 'html';
+  validate?: boolean;
 }
 
 const program = new Command();
@@ -119,6 +120,7 @@ program
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
   .option('--macro-format <format>', 'Use macro format instead of ADF (markdown or html)')
+  .option('--validate', 'Enable wiki markup validation before upload')
   .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
@@ -294,18 +296,20 @@ program
           console.log('DEBUG: Detected raw wiki markup file, using wiki format');
         }
 
-        // Validate wiki markup
-        const validationResult = validateWikiMarkup(wikiContent);
-        if (!validationResult.valid || validationResult.warnings.length > 0) {
-          console.log('\n⚠️  Wiki Markup Validation Issues:\n');
-          console.log(formatValidationResults(validationResult));
+        // Validate wiki markup only if explicitly enabled
+        if (options.validate) {
+          const validationResult = validateWikiMarkup(wikiContent);
+          if (!validationResult.valid || validationResult.warnings.length > 0) {
+            console.log('\n⚠️  Wiki Markup Validation Issues:\n');
+            console.log(formatValidationResults(validationResult));
 
-          if (!validationResult.valid) {
-            console.log('\n❌ Validation failed. Please fix the errors above before pushing.');
-            process.exit(1);
+            if (!validationResult.valid) {
+              console.log('\n❌ Validation failed. Please fix the errors above before pushing.');
+              process.exit(1);
+            }
+
+            console.log('\n⚠️  Proceeding with warnings...\n');
           }
-
-          console.log('\n⚠️  Proceeding with warnings...\n');
         }
       } else {
         content = { format: 'adf', data: adf };
