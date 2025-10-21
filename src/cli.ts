@@ -315,7 +315,7 @@ program
         content = { format: 'adf', data: adf };
       }
 
-      const pageId = await client.createOrUpdatePage({
+      let pageResponse = await client.createOrUpdatePage({
         spaceKey,
         title: pageTitle,
         content,
@@ -325,24 +325,85 @@ program
       });
 
       if (isDebugMode) {
-        console.log('DEBUG: Response from createOrUpdatePage:', pageId);
+        console.log('DEBUG: Response from createOrUpdatePage:', pageResponse);
       }
 
       // Use type assertion to access properties safely
       const responseId =
-        typeof pageId === 'object' && pageId && 'id' in pageId
-          ? (pageId as { id: string }).id
-          : String(pageId);
+        typeof pageResponse === 'object' && pageResponse && 'id' in pageResponse
+          ? (pageResponse as { id: string }).id
+          : String(pageResponse);
+
+      // Process images if content is wiki markup and upload-images option is enabled
+      if (content.format === 'wiki' && options.uploadImages) {
+        const wikiContent = content.data;
+        const baseDir = path.dirname(path.resolve(file));
+
+        if (isDebugMode) {
+          console.log('DEBUG: Processing wiki markup images...');
+          console.log(`DEBUG: Base directory: ${baseDir}`);
+        }
+
+        // Check if there are any images with paths to process
+        const hasImagesToProcess = /!([^!]*[/\\][^!]*)!/g.test(wikiContent);
+
+        if (hasImagesToProcess) {
+          console.log('Processing and uploading images...');
+
+          try {
+            const processedWikiContent = await client.processWikiMarkupImages(
+              wikiContent,
+              responseId,
+              baseDir
+            );
+
+            // Update the page with processed content (images uploaded, paths corrected)
+            if (processedWikiContent !== wikiContent) {
+              if (isDebugMode) {
+                console.log('DEBUG: Updating page with processed image references');
+              }
+
+              // Get current page to get version number
+              const currentPage = await client.getPage(responseId);
+              const currentVersion = currentPage.version?.number || 1;
+
+              pageResponse = await client.updatePage(
+                responseId,
+                pageTitle,
+                {
+                  type: 'doc',
+                  version: 1,
+                  content: [
+                    {
+                      type: 'wiki-markup',
+                      content: [{ type: 'text', text: processedWikiContent }],
+                    },
+                  ],
+                },
+                currentVersion + 1
+              );
+
+              console.log('✓ Images uploaded and references updated');
+            }
+          } catch (error) {
+            console.warn('⚠️  Warning: Failed to process images:', error);
+            // Continue even if image processing fails
+          }
+        } else if (isDebugMode) {
+          console.log('DEBUG: No images with paths found in wiki markup');
+        }
+      }
+
       console.log(`Successfully pushed to Confluence (Page ID: ${responseId})`);
 
       // Build the complete URL from the response
       let pageUrl = 'Not available';
-      const typedPageId = pageId as { _links?: { webui?: string; base?: string } };
+      const typedPageId = pageResponse as { _links?: { webui?: string; base?: string } };
       if (typedPageId._links?.webui && typedPageId._links?.base) {
         pageUrl = `${typedPageId._links.base}${typedPageId._links.webui}`;
       } else if (typedPageId._links?.webui) {
         // If no base URL is provided, use the configured URL
-        const config = getConfluenceConfig();
+        const config = await getConfluenceConfig();
         pageUrl = `${config.url}${typedPageId._links.webui}`;
       }
 

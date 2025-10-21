@@ -1,4 +1,5 @@
 import { createReadStream } from 'node:fs';
+import path from 'node:path';
 // Import FormData dynamically to make testing easier
 // This will be mocked in tests
 import type { default as FormDataType } from 'form-data';
@@ -951,6 +952,140 @@ export class ConfluenceClient {
       return this._uploadImageServer(spaceKey, filePath, comment);
     }
     return this._uploadImageCloud(spaceKey, filePath, comment);
+  }
+
+  /**
+   * Upload an attachment to a specific Confluence page
+   * @param pageId The ID of the page to attach the file to
+   * @param filePath Path to the file to upload
+   * @param filename Optional custom filename (defaults to basename of filePath)
+   * @param comment Optional comment for the attachment
+   * @returns The uploaded attachment response
+   */
+  async uploadAttachmentToPage(
+    pageId: string,
+    filePath: string,
+    filename?: string,
+    comment?: string
+  ): Promise<ImageUploadResponse> {
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    const actualFilename = filename || path.basename(filePath);
+
+    if (effectiveInstanceType === 'server') {
+      return this._uploadAttachment(
+        `/content/${pageId}/child/attachment`,
+        filePath,
+        actualFilename,
+        comment,
+        true // minorEdit for server
+      );
+    }
+
+    return this._uploadAttachment(
+      `/api/v2/pages/${pageId}/attachments`,
+      filePath,
+      actualFilename,
+      comment,
+      false // no minorEdit for cloud
+    );
+  }
+
+  /**
+   * Generic attachment upload helper (DRY)
+   */
+  private async _uploadAttachment(
+    endpoint: string,
+    filePath: string,
+    filename: string,
+    comment?: string,
+    minorEdit?: boolean
+  ): Promise<ImageUploadResponse> {
+    const fullEndpoint = this.buildApiEndpoint(endpoint);
+
+    const form = new FormData();
+    try {
+      form.append('file', createReadStream(filePath), filename);
+    } catch (error) {
+      if (process.env.NODE_ENV === 'test') {
+        this.log(`Test environment: Simulating file upload for ${filePath}`);
+      } else {
+        throw error;
+      }
+    }
+
+    form.append('comment', comment || 'Uploaded via doc2confluence');
+    if (minorEdit) {
+      form.append('minorEdit', 'true');
+    }
+
+    this.log(`Uploading attachment: ${fullEndpoint}`);
+    return this._fetchJson(fullEndpoint, {
+      method: 'POST',
+      headers: form.getHeaders(),
+      body: form as unknown as BodyInit,
+    }) as Promise<ImageUploadResponse>;
+  }
+
+  /**
+   * Process wiki markup content to upload images and convert paths to attachment references
+   * @param wikiMarkup The wiki markup content containing image references
+   * @param pageId The ID of the page to attach images to
+   * @param baseDir The base directory to resolve relative image paths
+   * @returns The processed wiki markup with updated image references
+   */
+  async processWikiMarkupImages(
+    wikiMarkup: string,
+    pageId: string,
+    baseDir: string
+  ): Promise<string> {
+    // Pattern to match Confluence image syntax: !path/to/image.png!
+    const imagePattern = /!([^!]+)!/g;
+    const matches = Array.from(wikiMarkup.matchAll(imagePattern));
+
+    if (matches.length === 0) {
+      this.log('No images found in wiki markup');
+      return wikiMarkup;
+    }
+
+    this.log(`Found ${matches.length} image(s) in wiki markup`);
+    let processedMarkup = wikiMarkup;
+
+    for (const match of matches) {
+      const imagePath = match[1]; // e.g., "./evidence/staging/deployment.png"
+
+      // Skip if it's already just a filename (no path separators)
+      if (!imagePath.includes('/') && !imagePath.includes('\\')) {
+        this.log(`Skipping image (already a filename): ${imagePath}`);
+        continue;
+      }
+
+      // Skip URLs
+      if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+        this.log(`Skipping external image: ${imagePath}`);
+        continue;
+      }
+
+      try {
+        // Resolve the full path
+        const fullPath = path.resolve(baseDir, imagePath);
+        const filename = path.basename(imagePath);
+
+        this.log(`Uploading image: ${fullPath} as ${filename}`);
+
+        // Upload the image as an attachment to the page
+        await this.uploadAttachmentToPage(pageId, fullPath, filename);
+
+        // Replace the path with just the filename
+        processedMarkup = processedMarkup.replace(`!${imagePath}!`, `!${filename}!`);
+
+        this.log(`✓ Uploaded and updated reference: ${imagePath} -> ${filename}`);
+      } catch (error) {
+        this.log(`✗ Failed to upload image ${imagePath}: ${error}`);
+        // Continue with other images even if one fails
+      }
+    }
+
+    return processedMarkup;
   }
 
   /**
