@@ -29,7 +29,7 @@
     "format": "biome format . --write",
     "check": "biome check --apply .",
     "ci": "biome ci .",
-    "prepare": "npm run build",
+    "prepublishOnly": "npm run build",
     "setup-hooks": "npx lefthook install"
   },
   "dependencies": {

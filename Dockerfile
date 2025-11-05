@@ -6,8 +6,9 @@ WORKDIR /app
 # Copy package files first to leverage Docker cache
 COPY package*.json ./
 
-# Install only production dependencies
-RUN npm ci --only=production
+# Install all dependencies (including devDependencies needed for build)
+# Skip Cypress binary download as it's not used in this project
+RUN CYPRESS_INSTALL_BINARY=0 npm ci
 
 # Copy source code
 COPY . .
