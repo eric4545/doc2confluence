@@ -1,118 +1,93 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import { convertMarkdownToWikiMarkup } from '../markdown-to-wiki';
-import { generateMermaidHtml, generateMermaidHtmlInline } from '../mermaid-html';
+import { generateMermaidUpgradeScript, generateMermaidUpgradeWikiMarkup } from '../mermaid-html';
 
-describe('Mermaid HTML Generator', () => {
-  const sampleMermaidCode = `graph TD;
-    A[Start] --> B[Process];
-    B --> C[End];`;
-
-  describe('generateMermaidHtml', () => {
-    it('should generate HTML with default options', () => {
-      const html = generateMermaidHtml(sampleMermaidCode);
+describe('Mermaid Upgrade Script Generator', () => {
+  describe('generateMermaidUpgradeScript', () => {
+    it('should generate script with default options', () => {
+      const script = generateMermaidUpgradeScript();
 
       // Check basic structure
-      assert.match(html, /<div class="mermaid-container"/);
-      assert.match(html, /<pre class="mermaid">/);
-      assert.match(html, /graph TD;/);
+      assert.match(script, /<script>/);
+      assert.match(script, /<\/script>/);
 
       // Check that default CDN URL is used with version 11
-      assert.match(html, /cdn\.jsdelivr\.net\/npm\/mermaid@11/);
+      assert.match(script, /cdn\.jsdelivr\.net\/npm\/mermaid@11/);
 
       // Check that default theme is 'default'
-      assert.match(html, /theme: 'default'/);
+      assert.match(script, /theme: 'default'/);
 
-      // Check loading state
-      assert.match(html, /Loading diagram\.\.\./);
+      // Check for upgrade logic
+      assert.match(script, /upgradeMermaid/);
+      assert.match(script, /mermaid\.initialize/);
+      assert.match(script, /mermaid\.run/);
     });
 
     it('should use specified Mermaid version', () => {
-      const html = generateMermaidHtml(sampleMermaidCode, { version: '10.9.0' });
-      assert.match(html, /cdn\.jsdelivr\.net\/npm\/mermaid@10\.9\.0/);
+      const script = generateMermaidUpgradeScript({ version: '10.9.0' });
+      assert.match(script, /cdn\.jsdelivr\.net\/npm\/mermaid@10\.9\.0/);
     });
 
     it('should use specified theme', () => {
-      const html = generateMermaidHtml(sampleMermaidCode, { theme: 'dark' });
-      assert.match(html, /theme: 'dark'/);
+      const script = generateMermaidUpgradeScript({ theme: 'dark' });
+      assert.match(script, /theme: 'dark'/);
     });
 
     it('should use forest theme', () => {
-      const html = generateMermaidHtml(sampleMermaidCode, { theme: 'forest' });
-      assert.match(html, /theme: 'forest'/);
+      const script = generateMermaidUpgradeScript({ theme: 'forest' });
+      assert.match(script, /theme: 'forest'/);
     });
 
     it('should include custom config', () => {
-      const html = generateMermaidHtml(sampleMermaidCode, {
+      const script = generateMermaidUpgradeScript({
         config: {
           flowchart: { curve: 'basis' },
         },
       });
-      assert.match(html, /flowchart/);
-      assert.match(html, /curve/);
-      assert.match(html, /basis/);
-    });
-
-    it('should escape HTML entities in mermaid code', () => {
-      const codeWithHtml = `graph TD;
-    A["<script>alert('xss')</script>"] --> B;`;
-
-      const html = generateMermaidHtml(codeWithHtml);
-
-      // Check that script tags are escaped
-      assert.match(html, /&lt;script&gt;/);
-      assert.match(html, /&lt;\/script&gt;/);
-      assert.doesNotMatch(html, /<script>alert/);
-    });
-
-    it('should generate unique container IDs', () => {
-      const html1 = generateMermaidHtml(sampleMermaidCode);
-      const html2 = generateMermaidHtml(sampleMermaidCode);
-
-      // Extract IDs
-      const idMatch1 = html1.match(/id="(mermaid-[^"]+)"/);
-      const idMatch2 = html2.match(/id="(mermaid-[^"]+)"/);
-
-      assert.ok(idMatch1, 'First HTML should have an ID');
-      assert.ok(idMatch2, 'Second HTML should have an ID');
-      assert.notStrictEqual(idMatch1[1], idMatch2[1], 'IDs should be different');
-    });
-
-    it('should handle script deduplication', () => {
-      const html = generateMermaidHtml(sampleMermaidCode);
-
-      // Check for deduplication mechanism
-      assert.match(html, /window\._mermaidLoading/);
-      assert.match(html, /window\._mermaidCallbacks/);
+      assert.match(script, /flowchart/);
+      assert.match(script, /curve/);
+      assert.match(script, /basis/);
     });
 
     it('should use custom CDN URL when provided', () => {
       const customCdn = 'https://my-cdn.example.com/mermaid@{version}/mermaid.min.js';
-      const html = generateMermaidHtml(sampleMermaidCode, {
+      const script = generateMermaidUpgradeScript({
         cdnUrl: customCdn,
         version: '11',
       });
 
-      assert.match(html, /my-cdn\.example\.com/);
+      assert.match(script, /my-cdn\.example\.com/);
+    });
+
+    it('should find all mermaid blocks on the page', () => {
+      const script = generateMermaidUpgradeScript();
+      // Check that it looks for various mermaid selectors
+      assert.match(script, /pre\.mermaid/);
+      assert.match(script, /code\.language-mermaid/);
+      assert.match(script, /\.mermaid/);
     });
   });
 
-  describe('generateMermaidHtmlInline', () => {
-    it('should generate minimal HTML without script', () => {
-      const html = generateMermaidHtmlInline(sampleMermaidCode);
+  describe('generateMermaidUpgradeWikiMarkup', () => {
+    it('should wrap script in {html} macro', () => {
+      const wikiMarkup = generateMermaidUpgradeWikiMarkup();
 
-      // Check basic structure
-      assert.match(html, /<div class="mermaid-container"/);
-      assert.match(html, /<pre class="mermaid">/);
-      assert.match(html, /graph TD;/);
+      assert.match(wikiMarkup, /^\{html\}/);
+      assert.match(wikiMarkup, /\{html\}$/);
+      assert.match(wikiMarkup, /<script>/);
+    });
 
-      // Should NOT have script tags
-      assert.doesNotMatch(html, /<script>/);
+    it('should pass options to script generator', () => {
+      const wikiMarkup = generateMermaidUpgradeWikiMarkup({ theme: 'dark', version: '10' });
+
+      assert.match(wikiMarkup, /theme: 'dark'/);
+      assert.match(wikiMarkup, /mermaid@10/);
     });
   });
 });
 
-describe('Mermaid HTML in Wiki Markup Conversion', () => {
+describe('Mermaid in Wiki Markup Conversion', () => {
   const mermaidMarkdown = `# Test Document
 
 Here is a diagram:
@@ -133,6 +108,9 @@ The end.`;
       assert.match(result, /\{markdown\}/);
       assert.match(result, /```mermaid/);
       assert.match(result, /graph TD;/);
+
+      // Should NOT have upgrade script
+      assert.doesNotMatch(result, /upgradeMermaid/);
     });
 
     it('should use {markdown} macro when mermaidFormat is native', () => {
@@ -141,23 +119,24 @@ The end.`;
       });
 
       assert.match(result, /\{markdown\}/);
-      assert.doesNotMatch(result, /\{html\}/);
+      // Should NOT have upgrade script
+      assert.doesNotMatch(result, /\{html\}[\s\S]*upgradeMermaid/);
     });
   });
 
-  describe('HTML format (latest Mermaid)', () => {
-    it('should use {html} macro when mermaidFormat is html', () => {
+  describe('HTML format (latest Mermaid via upgrade script)', () => {
+    it('should keep {markdown} macro and append upgrade script', () => {
       const result = convertMarkdownToWikiMarkup(mermaidMarkdown, {
         mermaidFormat: 'html',
       });
 
-      // Should use HTML macro
-      assert.match(result, /\{html\}/);
-      // Should NOT use markdown macro for mermaid
-      assert.doesNotMatch(result, /\{markdown\}[\s\S]*mermaid/);
+      // Should still have mermaid in markdown macro
+      assert.match(result, /\{markdown\}/);
+      assert.match(result, /```mermaid/);
 
-      // Should have mermaid container
-      assert.match(result, /mermaid-container/);
+      // Should have upgrade script appended
+      assert.match(result, /\{html\}/);
+      assert.match(result, /upgradeMermaid/);
       assert.match(result, /cdn\.jsdelivr\.net/);
     });
 
@@ -189,6 +168,24 @@ The end.`;
 
       assert.match(result, /flowchart/);
       assert.match(result, /linear/);
+    });
+
+    it('should NOT append upgrade script if no mermaid blocks', () => {
+      const noMermaidMarkdown = `# Test
+
+Just regular content.
+
+\`\`\`javascript
+const x = 1;
+\`\`\`
+`;
+
+      const result = convertMarkdownToWikiMarkup(noMermaidMarkdown, {
+        mermaidFormat: 'html',
+      });
+
+      // Should NOT have upgrade script since there are no mermaid blocks
+      assert.doesNotMatch(result, /upgradeMermaid/);
     });
   });
 
@@ -223,9 +220,45 @@ print("hello")
       assert.match(result, /\{code:python\}/);
       assert.match(result, /print\("hello"\)/);
 
-      // Mermaid should use html macro
-      assert.match(result, /\{html\}/);
-      assert.match(result, /mermaid-container/);
+      // Mermaid should be in markdown macro
+      assert.match(result, /\{markdown\}[\s\S]*mermaid[\s\S]*\{markdown\}/);
+
+      // Upgrade script should be at the end
+      assert.match(result, /upgradeMermaid/);
+    });
+
+    it('should handle multiple mermaid diagrams with single upgrade script', () => {
+      const multiMermaidMarkdown = `# Test
+
+\`\`\`mermaid
+graph TD;
+    A-->B;
+\`\`\`
+
+Some text.
+
+\`\`\`mermaid
+sequenceDiagram
+    Alice->>Bob: Hello
+\`\`\`
+`;
+
+      const result = convertMarkdownToWikiMarkup(multiMermaidMarkdown, {
+        mermaidFormat: 'html',
+      });
+
+      // Should have both diagrams
+      assert.match(result, /graph TD/);
+      assert.match(result, /sequenceDiagram/);
+
+      // Should only have ONE {html} macro at the end (for the upgrade script)
+      // Count {html} occurrences - should be 2 (opening and closing)
+      const htmlMacroMatches = result.match(/\{html\}/g);
+      assert.strictEqual(
+        htmlMacroMatches?.length,
+        2,
+        'Should have exactly one {html} macro (open+close)'
+      );
     });
   });
 });

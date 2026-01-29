@@ -8,7 +8,11 @@ import { JSDOM } from 'jsdom';
 import * as marked from 'marked';
 import * as showdown from 'showdown';
 import type { ConfluenceClient } from './confluence';
-import { generateMermaidHtml, type MermaidHtmlOptions, type MermaidTheme } from './mermaid-html';
+import {
+  generateMermaidUpgradeScript,
+  type MermaidHtmlOptions,
+  type MermaidTheme,
+} from './mermaid-html';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
@@ -73,6 +77,7 @@ export interface CsvOptions {
 export class Converter {
   private adfSchema: unknown = null;
   private ajv: Ajv;
+  private hasMermaidBlocks = false;
 
   constructor() {
     this.ajv = new Ajv({ allErrors: true });
@@ -167,6 +172,9 @@ export class Converter {
       return this.createHtmlMacroADF(markdown);
     }
 
+    // Reset mermaid tracking for this conversion
+    this.hasMermaidBlocks = false;
+
     console.log('Original markdown:', markdown);
 
     // Parse markdown to HTML AST
@@ -180,6 +188,17 @@ export class Converter {
       if (node) {
         content.push(node);
       }
+    }
+
+    // If mermaidFormat is 'html' and we have mermaid blocks, append the upgrade script
+    if (options.mermaidFormat === 'html' && this.hasMermaidBlocks) {
+      const mermaidHtmlOptions: MermaidHtmlOptions = {
+        version: options.mermaidVersion,
+        theme: options.mermaidTheme,
+        config: options.mermaidConfig,
+      };
+      const upgradeScript = generateMermaidUpgradeScript(mermaidHtmlOptions);
+      content.push(this.createHtmlMacroForContent(upgradeScript));
     }
 
     const adf: ADFEntity = {
@@ -432,18 +451,12 @@ export class Converter {
           }
         }
 
-        // Handle Mermaid code blocks with HTML format option
-        if (codeToken.lang === 'mermaid' && options.mermaidFormat === 'html') {
-          const mermaidHtmlOptions: MermaidHtmlOptions = {
-            version: options.mermaidVersion,
-            theme: options.mermaidTheme,
-            config: options.mermaidConfig,
-          };
-          const html = generateMermaidHtml(codeToken.text, mermaidHtmlOptions);
-          return this.createHtmlMacroForContent(html);
+        // Track mermaid blocks (upgrade script will be appended at the end if needed)
+        if (codeToken.lang === 'mermaid') {
+          this.hasMermaidBlocks = true;
         }
 
-        // Handle regular code blocks
+        // Handle regular code blocks (including mermaid - rendered by Confluence, then upgraded)
         return {
           type: 'codeBlock',
           attrs: {

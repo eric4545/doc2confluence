@@ -1,8 +1,9 @@
 /**
  * Mermaid HTML Template Generator
  *
- * This module generates HTML templates for rendering Mermaid diagrams
- * via Confluence's HTML macro with the latest Mermaid.js from CDN.
+ * This module generates HTML templates for upgrading Mermaid.js version
+ * in Confluence pages. Instead of replacing each mermaid block, we add
+ * a single script loader that upgrades the Mermaid version globally.
  */
 
 export type MermaidTheme = 'default' | 'dark' | 'forest' | 'neutral' | 'base';
@@ -21,27 +22,6 @@ export interface MermaidHtmlOptions {
 const DEFAULT_VERSION = '11';
 const DEFAULT_THEME: MermaidTheme = 'default';
 const DEFAULT_CDN_URL = 'https://cdn.jsdelivr.net/npm/mermaid@{version}/dist/mermaid.min.js';
-
-/**
- * Generate a unique ID for the mermaid container
- */
-function generateUniqueId(): string {
-  return `mermaid-${Math.random().toString(36).substring(2, 10)}-${Date.now().toString(36)}`;
-}
-
-/**
- * Escape HTML entities in mermaid code to prevent XSS
- */
-function escapeHtml(text: string): string {
-  const htmlEntities: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  };
-  return text.replace(/[&<>"']/g, (char) => htmlEntities[char] || char);
-}
 
 /**
  * Build the CDN URL with the specified version
@@ -69,26 +49,29 @@ function serializeConfig(config: Record<string, unknown> | undefined): string {
     return lines
       .slice(1, -1)
       .map((line) => line.replace(/^ {2}/, ''))
-      .join('\n        ');
+      .join('\n      ');
   }
   // Single line or empty
   return jsonStr.slice(1, -1).trim();
 }
 
 /**
- * Generate HTML for a single Mermaid diagram
- * This HTML can be used within Confluence's HTML macro
+ * Generate an HTML script loader that upgrades Mermaid.js to the latest version.
+ * This script should be added once per page (typically at the end) and will:
+ * 1. Load the specified Mermaid.js version from CDN
+ * 2. Re-initialize and re-render all mermaid diagrams on the page
  *
- * @param mermaidCode - The Mermaid diagram code
- * @param options - Configuration options for the HTML generation
- * @returns HTML string ready for Confluence HTML macro
+ * Usage: Add this in an {html} macro at the end of your Confluence page.
+ * The existing {markdown} macros with mermaid code blocks will be re-rendered
+ * with the new Mermaid version.
+ *
+ * @param options - Configuration options for the Mermaid upgrade
+ * @returns HTML string with script loader for Confluence HTML macro
  */
-export function generateMermaidHtml(mermaidCode: string, options: MermaidHtmlOptions = {}): string {
-  const uniqueId = generateUniqueId();
+export function generateMermaidUpgradeScript(options: MermaidHtmlOptions = {}): string {
   const version = options.version || DEFAULT_VERSION;
   const theme = options.theme || DEFAULT_THEME;
   const cdnUrl = buildCdnUrl(options);
-  const escapedCode = escapeHtml(mermaidCode.trim());
   const customConfigStr = serializeConfig(options.config);
 
   // Build the config object string
@@ -98,116 +81,81 @@ export function generateMermaidHtml(mermaidCode: string, options: MermaidHtmlOpt
     configParts.push(customConfigStr);
   }
 
-  const configStr = configParts.join(',\n        ');
+  const configStr = configParts.join(',\n      ');
 
-  return `<div class="mermaid-container" id="${uniqueId}" style="min-height: 100px;">
-  <style>
-    .mermaid-container .mermaid-loading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100px;
-      color: #666;
-      font-style: italic;
-    }
-    .mermaid-container .mermaid {
-      display: none;
-    }
-    .mermaid-container.mermaid-loaded .mermaid {
-      display: block;
-    }
-    .mermaid-container.mermaid-loaded .mermaid-loading {
-      display: none;
-    }
-  </style>
-  <div class="mermaid-loading">Loading diagram...</div>
-  <pre class="mermaid">
-${escapedCode}
-  </pre>
-</div>
-<script>
+  return `<script>
 (function() {
-  var containerId = '${uniqueId}';
-  var container = document.getElementById(containerId);
+  // Mermaid.js Upgrade Script - Loads v${version} from CDN
+  // This overrides Confluence's built-in Mermaid (~9.x) with the latest version
 
-  function initMermaid() {
-    if (typeof mermaid === 'undefined') {
-      console.error('Mermaid library not loaded');
+  function upgradeMermaid() {
+    // Find all mermaid code blocks rendered by Confluence's markdown macro
+    var mermaidBlocks = document.querySelectorAll('pre.mermaid, code.language-mermaid, .mermaid');
+
+    if (mermaidBlocks.length === 0) {
+      console.log('Mermaid upgrade: No mermaid blocks found on page');
       return;
     }
 
+    console.log('Mermaid upgrade: Found ' + mermaidBlocks.length + ' diagram(s), upgrading to v${version}...');
+
+    // Initialize with custom config
     mermaid.initialize({
-        ${configStr}
+      ${configStr}
     });
 
+    // Re-render all mermaid diagrams
     mermaid.run({
-      querySelector: '#' + containerId + ' .mermaid'
+      nodes: mermaidBlocks
     }).then(function() {
-      container.classList.add('mermaid-loaded');
+      console.log('Mermaid upgrade: Successfully rendered ' + mermaidBlocks.length + ' diagram(s)');
     }).catch(function(err) {
-      console.error('Mermaid rendering error:', err);
-      container.querySelector('.mermaid-loading').textContent = 'Error rendering diagram';
+      console.error('Mermaid upgrade: Error rendering diagrams:', err);
     });
   }
 
-  // Check if Mermaid is already loaded
-  if (typeof mermaid !== 'undefined') {
-    initMermaid();
-  } else if (!window._mermaidLoading) {
-    // Load Mermaid from CDN (only once per page)
-    window._mermaidLoading = true;
-    window._mermaidCallbacks = window._mermaidCallbacks || [];
-    window._mermaidCallbacks.push(initMermaid);
-
-    var script = document.createElement('script');
-    script.src = '${cdnUrl}';
-    script.onload = function() {
-      window._mermaidCallbacks.forEach(function(cb) { cb(); });
-      window._mermaidCallbacks = [];
-    };
-    script.onerror = function() {
-      console.error('Failed to load Mermaid.js v${version} from CDN');
-      container.querySelector('.mermaid-loading').textContent = 'Failed to load diagram library';
-    };
-    document.head.appendChild(script);
-  } else {
-    // Mermaid is being loaded, queue callback
-    window._mermaidCallbacks = window._mermaidCallbacks || [];
-    window._mermaidCallbacks.push(initMermaid);
-  }
+  // Load Mermaid.js from CDN
+  var script = document.createElement('script');
+  script.src = '${cdnUrl}';
+  script.onload = function() {
+    console.log('Mermaid upgrade: Loaded Mermaid.js v${version}');
+    // Wait for DOM to be ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', upgradeMermaid);
+    } else {
+      // Small delay to ensure Confluence's rendering is complete
+      setTimeout(upgradeMermaid, 100);
+    }
+  };
+  script.onerror = function() {
+    console.error('Mermaid upgrade: Failed to load Mermaid.js v${version} from CDN');
+  };
+  document.head.appendChild(script);
 })();
 </script>`;
 }
 
 /**
- * Generate HTML for multiple Mermaid diagrams on the same page
- * This optimizes loading by sharing a single script load
+ * Generate the wiki markup for the mermaid upgrade script
+ * This wraps the script in {html} macro for direct use in wiki markup
  *
- * @param diagrams - Array of mermaid diagram codes
- * @param options - Configuration options for the HTML generation
- * @returns Array of HTML strings, one per diagram
+ * @param options - Configuration options for the Mermaid upgrade
+ * @returns Wiki markup string with {html} macro containing the upgrade script
  */
-export function generateMultipleMermaidHtml(
-  diagrams: string[],
-  options: MermaidHtmlOptions = {}
-): string[] {
-  return diagrams.map((code) => generateMermaidHtml(code, options));
+export function generateMermaidUpgradeWikiMarkup(options: MermaidHtmlOptions = {}): string {
+  const script = generateMermaidUpgradeScript(options);
+  return `{html}${script}{html}`;
 }
 
-/**
- * Generate a minimal HTML snippet for inline usage (without script)
- * Use this when you know Mermaid.js is already loaded on the page
- *
- * @param mermaidCode - The Mermaid diagram code
- * @returns HTML string with just the diagram container
- */
-export function generateMermaidHtmlInline(mermaidCode: string): string {
-  const uniqueId = generateUniqueId();
-  const escapedCode = escapeHtml(mermaidCode.trim());
+// Legacy exports for backwards compatibility
+export { generateMermaidUpgradeScript as generateMermaidHtml };
 
-  return `<div class="mermaid-container" id="${uniqueId}">
-  <pre class="mermaid">
-${escapedCode}
-  </pre>
-</div>`;
+/**
+ * @deprecated Use generateMermaidUpgradeScript instead
+ */
+export function generateMermaidHtmlInline(_mermaidCode: string): string {
+  console.warn(
+    'generateMermaidHtmlInline is deprecated. Use generateMermaidUpgradeScript instead.'
+  );
+  return generateMermaidUpgradeScript();
 }

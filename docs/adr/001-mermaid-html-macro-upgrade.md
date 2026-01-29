@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -45,12 +45,19 @@ Both approaches rely on Confluence's built-in rendering, which uses an old Merma
 Confluence supports an **HTML macro** that can execute custom JavaScript. By using this, we can:
 
 1. Load the latest Mermaid.js from a CDN
-2. Render diagrams client-side with full feature support
+2. Re-render existing mermaid diagrams with the new version
 3. Allow custom configuration (themes, security settings, etc.)
 
 ## Decision
 
-We will implement a new `mermaidFormat` option that supports rendering Mermaid diagrams via the HTML macro with a configurable Mermaid.js version.
+We will implement a **Mermaid upgrade script** approach:
+
+1. **Keep existing `{markdown}` macro** for mermaid code blocks (unchanged)
+2. **Append a single `{html}` macro** at the end of the document with a script that:
+   - Loads the latest Mermaid.js from CDN
+   - Re-initializes and re-renders all mermaid diagrams on the page
+
+This approach is simpler and more efficient than replacing each mermaid block individually.
 
 ### New Configuration Options
 
@@ -60,7 +67,7 @@ interface ConversionOptions {
 
   // Mermaid rendering format
   // - 'native': Use Confluence's built-in rendering (current behavior)
-  // - 'html': Use HTML macro with CDN-loaded Mermaid.js
+  // - 'html': Keep {markdown} macro but append upgrade script
   mermaidFormat?: 'native' | 'html';
 
   // Mermaid.js version for CDN (only used when mermaidFormat='html')
@@ -76,57 +83,48 @@ interface ConversionOptions {
 }
 ```
 
-### HTML Template for Mermaid Rendering
+### Upgrade Script (appended once per page)
 
 ```html
-<div class="mermaid-container" id="mermaid-{{uniqueId}}">
-  <pre class="mermaid">
-{{mermaidCode}}
-  </pre>
-</div>
+{html}
 <script>
 (function() {
-  // Check if Mermaid is already loaded
-  if (typeof mermaid === 'undefined') {
-    // Load Mermaid from CDN
-    var script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/mermaid@{{version}}/dist/mermaid.min.js';
-    script.onload = function() {
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: '{{theme}}',
-        securityLevel: 'loose',
-        {{customConfig}}
-      });
-      mermaid.run({
-        querySelector: '#mermaid-{{uniqueId}} .mermaid'
-      });
-    };
-    document.head.appendChild(script);
-  } else {
-    // Mermaid already loaded, just render
-    mermaid.run({
-      querySelector: '#mermaid-{{uniqueId}} .mermaid'
+  // Load Mermaid.js from CDN
+  var script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
+  script.onload = function() {
+    // Find all mermaid blocks rendered by Confluence's markdown macro
+    var mermaidBlocks = document.querySelectorAll('pre.mermaid, code.language-mermaid, .mermaid');
+
+    // Initialize with custom config
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'default',
+      securityLevel: 'loose'
     });
-  }
+
+    // Re-render all mermaid diagrams with the new version
+    mermaid.run({ nodes: mermaidBlocks });
+  };
+  document.head.appendChild(script);
 })();
 </script>
+{html}
 ```
 
 ### Implementation Locations
 
-1. **`src/converter.ts`**: Update `tokenToADFNode` for code blocks to handle mermaid with new format
-2. **`src/markdown-to-wiki.ts`**: Update `convertCodeBlock` to generate HTML macro for mermaid
-3. **`src/confluence.ts`**: Update ADF to storage format conversion for mermaid HTML macros
+1. **`src/mermaid-html.ts`**: Dedicated module for upgrade script generation
+2. **`src/converter.ts`**: Track mermaid blocks, append upgrade script to ADF
+3. **`src/markdown-to-wiki.ts`**: Track mermaid blocks, append upgrade script to wiki markup
 4. **`src/cli.ts`**: Add CLI options for mermaid configuration
-5. **New file `src/mermaid-html.ts`**: Dedicated module for HTML template generation
 
 ### Usage Examples
 
 #### CLI Usage
 
 ```bash
-# Use latest Mermaid via HTML macro
+# Use latest Mermaid via upgrade script
 doc2conf push docs/diagram.md --mermaid-format html
 
 # Specify Mermaid version and theme
@@ -136,74 +134,73 @@ doc2conf push docs/diagram.md --mermaid-format html --mermaid-version 11 --merma
 doc2conf push docs/diagram.md --mermaid-format html --mermaid-config '{"flowchart":{"curve":"basis"}}'
 ```
 
-#### Frontmatter Configuration
+#### Output Example
 
-```yaml
----
-title: My Diagram Page
-mermaidFormat: html
-mermaidVersion: "11"
-mermaidTheme: forest
-mermaidConfig:
-  flowchart:
-    curve: basis
-  themeVariables:
-    primaryColor: "#ff0000"
----
+For a document with mermaid diagrams, when `--mermaid-format html` is used:
 
-# Architecture Diagram
+```
+h1. My Diagram
 
+{markdown}
 ```mermaid
-graph TD
-    A[Client] -->|HTTP| B[Load Balancer]
-    B --> C[Server 1]
-    B --> D[Server 2]
+graph TD;
+    A-->B;
 ```
+{markdown}
+
+Some text here.
+
+{markdown}
+```mermaid
+sequenceDiagram
+    Alice->>Bob: Hello
 ```
+{markdown}
 
-#### Programmatic API
-
-```typescript
-import { Converter } from 'doc2confluence';
-
-const converter = new Converter();
-const adf = await converter.convertToADF(markdown, {
-  mermaidFormat: 'html',
-  mermaidVersion: '11',
-  mermaidTheme: 'dark',
-  mermaidConfig: {
-    flowchart: { curve: 'basis' }
-  }
-});
+{html}
+<script>
+// Upgrade script that loads Mermaid.js v11 and re-renders all diagrams
+</script>
+{html}
 ```
 
 ## Consequences
 
 ### Positive
 
-1. **Access to Latest Features**: Users can utilize all modern Mermaid diagram types and syntax
-2. **Customization**: Full control over theme, styling, and configuration
-3. **Security Updates**: Ability to use patched versions without waiting for Confluence updates
-4. **Backward Compatible**: Default behavior remains unchanged (`mermaidFormat: 'native'`)
-5. **Flexibility**: Version can be pinned for reproducibility or set to latest
+1. **Simple Implementation**: Single script appended at the end, no changes to diagram blocks
+2. **Access to Latest Features**: Users can utilize all modern Mermaid diagram types and syntax
+3. **Customization**: Full control over theme, styling, and configuration
+4. **Efficient**: One script load handles all diagrams on the page
+5. **Backward Compatible**: Default behavior remains unchanged (`mermaidFormat: 'native'`)
+6. **Flexibility**: Version can be pinned for reproducibility or set to latest
 
 ### Negative
 
 1. **CDN Dependency**: Requires network access to CDN at page view time (unless self-hosted)
 2. **Client-Side Rendering**: Diagrams render in browser rather than server-side
 3. **HTML Macro Requirement**: Target Confluence instance must have HTML macro enabled
-4. **Slightly Larger Page Size**: Additional JavaScript loading per page with diagrams
+4. **Brief Flash**: Diagrams may briefly show old rendering before upgrade script runs
 
 ### Mitigations
 
 1. **CDN Caching**: jsdelivr provides excellent caching and availability
-2. **Loading States**: Add CSS to show loading placeholder while script loads
+2. **Delayed Execution**: Script waits for DOM ready and adds small delay for Confluence rendering
 3. **Fallback Option**: Document how to self-host Mermaid.js for restricted environments
-4. **Deduplication**: Script loading is deduplicated when multiple diagrams exist on same page
+4. **Single Script**: Only one script load per page regardless of diagram count
 
 ## Alternatives Considered
 
-### 1. Server-Side Pre-Rendering
+### 1. Replace Each Mermaid Block with HTML
+
+Wrap each mermaid diagram in its own `{html}` macro with embedded script.
+
+**Rejected because**:
+- More complex implementation
+- Duplicate script loading logic per diagram
+- Larger page size with multiple diagrams
+
+### 2. Server-Side Pre-Rendering
 
 Convert Mermaid to SVG/PNG during the build process and embed as images.
 
@@ -212,7 +209,7 @@ Convert Mermaid to SVG/PNG during the build process and embed as images.
 - Loses interactivity and accessibility
 - Increases build time significantly
 
-### 2. Confluence App/Plugin
+### 3. Confluence App/Plugin
 
 Create a custom Confluence app with updated Mermaid version.
 
@@ -220,36 +217,6 @@ Create a custom Confluence app with updated Mermaid version.
 - Requires admin access to install
 - More complex deployment
 - Out of scope for this conversion tool
-
-### 3. Self-Hosted Script via Attachment
-
-Upload Mermaid.js as page attachment and reference it.
-
-**Future consideration**:
-- Could be added as option for environments without CDN access
-- Would require additional attachment upload logic
-
-## Implementation Plan
-
-### Phase 1: Core Implementation
-
-1. Create `src/mermaid-html.ts` with HTML template generation
-2. Update `ConversionOptions` interface with new mermaid options
-3. Implement HTML macro generation in `converter.ts`
-4. Update `markdown-to-wiki.ts` for wiki markup format
-
-### Phase 2: CLI Integration
-
-1. Add CLI options for mermaid configuration
-2. Support frontmatter configuration
-3. Update configuration file schema
-
-### Phase 3: Testing & Documentation
-
-1. Add unit tests for HTML template generation
-2. Add integration tests for full conversion pipeline
-3. Update README with usage examples
-4. Add example markdown files demonstrating various configurations
 
 ## References
 

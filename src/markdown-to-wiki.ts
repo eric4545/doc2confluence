@@ -1,5 +1,9 @@
 import * as marked from 'marked';
-import { generateMermaidHtml, type MermaidHtmlOptions, type MermaidTheme } from './mermaid-html';
+import {
+  generateMermaidUpgradeWikiMarkup,
+  type MermaidHtmlOptions,
+  type MermaidTheme,
+} from './mermaid-html';
 
 /**
  * Options for wiki markup conversion
@@ -8,7 +12,7 @@ export interface WikiMarkupConversionOptions {
   /**
    * Mermaid diagram rendering format:
    * - 'native': Use Confluence's built-in rendering via {markdown} macro (default)
-   * - 'html': Use HTML macro with CDN-loaded latest Mermaid.js
+   * - 'html': Keep {markdown} macro but append a script to load latest Mermaid.js from CDN
    */
   mermaidFormat?: 'native' | 'html';
   /** Mermaid.js version for CDN (only used when mermaidFormat='html'). Default: '11' */
@@ -57,6 +61,8 @@ function fixMalformedMermaidBlocks(wikiMarkup: string): string {
 
 // Store options globally for use in nested functions
 let _conversionOptions: WikiMarkupConversionOptions = {};
+// Track if document has mermaid blocks
+let _hasMermaidBlocks = false;
 
 /**
  * Converts Markdown content to Confluence Wiki Markup format
@@ -72,6 +78,7 @@ export function convertMarkdownToWikiMarkup(
 ): string {
   // Store options for use in nested functions
   _conversionOptions = options;
+  _hasMermaidBlocks = false;
 
   // Strip YAML frontmatter if present (hide metadata in Confluence)
   const cleanMarkdown = stripYamlFrontmatter(markdown);
@@ -84,13 +91,21 @@ export function convertMarkdownToWikiMarkup(
   });
 
   // Convert tokens to Wiki Markup
-  const result = processTokens(tokens);
+  let result = processTokens(tokens);
 
   // Post-process to fix malformed mermaid blocks with {code:none} injections
-  // (only for native format, html format uses {html} macro)
-  if (options.mermaidFormat !== 'html') {
-    return fixMalformedMermaidBlocks(result);
+  result = fixMalformedMermaidBlocks(result);
+
+  // If mermaidFormat is 'html' and we have mermaid blocks, append the upgrade script
+  if (options.mermaidFormat === 'html' && _hasMermaidBlocks) {
+    const mermaidHtmlOptions: MermaidHtmlOptions = {
+      version: options.mermaidVersion,
+      theme: options.mermaidTheme,
+      config: options.mermaidConfig,
+    };
+    result += '\n\n' + generateMermaidUpgradeWikiMarkup(mermaidHtmlOptions);
   }
+
   return result;
 }
 
@@ -305,7 +320,8 @@ function convertTable(token: marked.Tokens.Table): string {
 /**
  * Convert code block to Wiki Markup
  * Markdown: ```lang ... ``` → Wiki: {code:lang}...{code}
- * Special case: mermaid diagrams use {markdown} wrapper (or {html} with latest version)
+ * Special case: mermaid diagrams use {markdown} wrapper
+ * When mermaidFormat='html', we still use {markdown} but add an upgrade script at the end
  */
 function convertCodeBlock(token: marked.Tokens.Code): string {
   const lang = token.lang || 'none';
@@ -313,18 +329,10 @@ function convertCodeBlock(token: marked.Tokens.Code): string {
 
   // Special handling for mermaid diagrams
   if (lang === 'mermaid') {
-    // Check if HTML format is requested for latest Mermaid.js
-    if (_conversionOptions.mermaidFormat === 'html') {
-      const mermaidHtmlOptions: MermaidHtmlOptions = {
-        version: _conversionOptions.mermaidVersion,
-        theme: _conversionOptions.mermaidTheme,
-        config: _conversionOptions.mermaidConfig,
-      };
-      const html = generateMermaidHtml(code, mermaidHtmlOptions);
-      return `{html}\n${html}\n{html}\n\n`;
-    }
+    // Track that we have mermaid blocks (for appending upgrade script if needed)
+    _hasMermaidBlocks = true;
 
-    // Default: wrap in {markdown} macro (uses Confluence's built-in old Mermaid)
+    // Always use {markdown} macro - the upgrade script will re-render with latest Mermaid
     return `{markdown}\n\`\`\`mermaid\n${code}\n\`\`\`\n{markdown}\n\n`;
   }
 
