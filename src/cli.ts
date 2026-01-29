@@ -11,6 +11,8 @@ import { parseMarkdownFile } from './metadata';
 import type { ADFEntity } from './types';
 import { formatValidationResults, validateWikiMarkup } from './wiki-markup-validator';
 
+type MermaidTheme = 'default' | 'dark' | 'forest' | 'neutral' | 'base';
+
 interface ConvertOptions {
   dryRun?: boolean;
   instanceType?: ConfluenceInstanceType;
@@ -26,6 +28,11 @@ interface ConvertOptions {
   pageId?: string;
   macroFormat?: 'markdown' | 'html';
   validate?: boolean;
+  // Mermaid options
+  mermaidFormat?: 'native' | 'html';
+  mermaidVersion?: string;
+  mermaidTheme?: MermaidTheme;
+  mermaidConfig?: string; // JSON string from CLI
 }
 
 const program = new Command();
@@ -69,12 +76,35 @@ program
   .option('--dry-run', 'Preview ADF output without saving')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
   .option('--macro-format <format>', 'Use macro format instead of ADF (markdown or html)')
+  .option(
+    '--mermaid-format <format>',
+    'Mermaid rendering: native (default, uses Confluence built-in ~9.x) or html (uses latest from CDN)'
+  )
+  .option('--mermaid-version <version>', 'Mermaid.js version for CDN (e.g., 11, 10.9.0)', '11')
+  .option(
+    '--mermaid-theme <theme>',
+    'Mermaid theme: default, dark, forest, neutral, base',
+    'default'
+  )
+  .option('--mermaid-config <json>', 'Custom Mermaid config as JSON string')
   .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
       isDebugMode = program.opts().debug || false;
 
       const format = options.format as InputFormat;
+
+      // Parse mermaid config if provided
+      let mermaidConfig: Record<string, unknown> | undefined;
+      if (options.mermaidConfig) {
+        try {
+          mermaidConfig = JSON.parse(options.mermaidConfig);
+        } catch (e) {
+          console.error('Error: Invalid JSON in --mermaid-config');
+          process.exit(1);
+        }
+      }
+
       const adf = await convertFile(file, format, {
         generateToc: options.toc,
         parseInlineCards: options.inlineCards,
@@ -82,6 +112,10 @@ program
         useOfficialSchema: options.useOfficialSchema,
         instanceType: options.instanceType || 'cloud',
         macroFormat: options.macroFormat,
+        mermaidFormat: options.mermaidFormat,
+        mermaidVersion: options.mermaidVersion,
+        mermaidTheme: options.mermaidTheme as MermaidTheme,
+        mermaidConfig,
       });
 
       if (options.dryRun) {
@@ -121,6 +155,17 @@ program
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
   .option('--macro-format <format>', 'Use macro format instead of ADF (markdown or html)')
   .option('--validate', 'Enable wiki markup validation before upload')
+  .option(
+    '--mermaid-format <format>',
+    'Mermaid rendering: native (default, uses Confluence built-in ~9.x) or html (uses latest from CDN)'
+  )
+  .option('--mermaid-version <version>', 'Mermaid.js version for CDN (e.g., 11, 10.9.0)', '11')
+  .option(
+    '--mermaid-theme <theme>',
+    'Mermaid theme: default, dark, forest, neutral, base',
+    'default'
+  )
+  .option('--mermaid-config <json>', 'Custom Mermaid config as JSON string')
   .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
@@ -207,6 +252,17 @@ program
           }
         }
 
+        // Parse mermaid config if provided
+        let mermaidConfig: Record<string, unknown> | undefined;
+        if (options.mermaidConfig) {
+          try {
+            mermaidConfig = JSON.parse(options.mermaidConfig);
+          } catch (e) {
+            console.error('Error: Invalid JSON in --mermaid-config');
+            process.exit(1);
+          }
+        }
+
         // Convert with metadata handling
         adf = await convertFile(file, format, {
           generateToc: options.toc,
@@ -214,6 +270,10 @@ program
           uploadImages: options.uploadImages,
           useOfficialSchema: options.useOfficialSchema,
           macroFormat: metadata.macroFormat,
+          mermaidFormat: options.mermaidFormat,
+          mermaidVersion: options.mermaidVersion,
+          mermaidTheme: options.mermaidTheme as MermaidTheme,
+          mermaidConfig,
         });
       }
 

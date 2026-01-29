@@ -3,7 +3,7 @@ import asciidoctor from 'asciidoctor';
 import { parse as parseCsv } from 'csv-parse';
 import type { ConversionOptions } from '../converter';
 import { Converter } from '../converter';
-import { convertMarkdownToWikiMarkup } from '../markdown-to-wiki';
+import { convertMarkdownToWikiMarkup, type WikiMarkupConversionOptions } from '../markdown-to-wiki';
 import { parseMarkdownFile } from '../metadata';
 
 // Define ADFEntity type since we can't import it
@@ -15,10 +15,17 @@ export interface ADFEntity {
 
 export type InputFormat = 'markdown' | 'asciidoc' | 'csv' | 'confluence-markup';
 
-// Extend ConversionOptions to ensure macro options are included
+type MermaidTheme = 'default' | 'dark' | 'forest' | 'neutral' | 'base';
+
+// Extend ConversionOptions to ensure macro and mermaid options are included
 export interface ExtendedConversionOptions extends ConversionOptions {
   macroFormat?: 'markdown' | 'html';
   format?: string;
+  // Mermaid options
+  mermaidFormat?: 'native' | 'html';
+  mermaidVersion?: string;
+  mermaidTheme?: MermaidTheme;
+  mermaidConfig?: Record<string, unknown>;
 }
 
 export interface FormatConverter {
@@ -26,9 +33,17 @@ export interface FormatConverter {
 }
 
 export class ConfluenceMarkupConverter implements FormatConverter {
-  async convert(content: string, _options: ExtendedConversionOptions): Promise<ADFEntity> {
-    // Convert Markdown to Confluence Wiki Markup
-    const wikiMarkup = convertMarkdownToWikiMarkup(content);
+  async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
+    // Build wiki markup conversion options from extended options
+    const wikiOptions: WikiMarkupConversionOptions = {
+      mermaidFormat: options.mermaidFormat,
+      mermaidVersion: options.mermaidVersion,
+      mermaidTheme: options.mermaidTheme,
+      mermaidConfig: options.mermaidConfig,
+    };
+
+    // Convert Markdown to Confluence Wiki Markup with mermaid options
+    const wikiMarkup = convertMarkdownToWikiMarkup(content, wikiOptions);
 
     return Promise.resolve({
       type: 'doc',

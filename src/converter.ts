@@ -8,6 +8,7 @@ import { JSDOM } from 'jsdom';
 import * as marked from 'marked';
 import * as showdown from 'showdown';
 import type { ConfluenceClient } from './confluence';
+import { generateMermaidHtml, type MermaidHtmlOptions, type MermaidTheme } from './mermaid-html';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
@@ -43,8 +44,18 @@ export interface ConversionOptions {
   pageId?: string;
   labels?: string[];
   generateToc?: boolean;
-  mermaidFormat?: 'mermaid' | 'markdown';
-  mermaidTheme?: string;
+  /**
+   * Mermaid diagram rendering format:
+   * - 'native': Use Confluence's built-in rendering via {markdown} macro (default, uses old Mermaid ~9.x)
+   * - 'html': Use HTML macro with CDN-loaded latest Mermaid.js for modern features
+   */
+  mermaidFormat?: 'native' | 'html';
+  /** Mermaid.js version for CDN (only used when mermaidFormat='html'). Default: '11' */
+  mermaidVersion?: string;
+  /** Mermaid theme (only used when mermaidFormat='html'). Default: 'default' */
+  mermaidTheme?: MermaidTheme;
+  /** Custom Mermaid configuration object (only used when mermaidFormat='html') */
+  mermaidConfig?: Record<string, unknown>;
   macroFormat?: 'markdown' | 'html';
 }
 
@@ -419,6 +430,17 @@ export class Converter {
               ],
             };
           }
+        }
+
+        // Handle Mermaid code blocks with HTML format option
+        if (codeToken.lang === 'mermaid' && options.mermaidFormat === 'html') {
+          const mermaidHtmlOptions: MermaidHtmlOptions = {
+            version: options.mermaidVersion,
+            theme: options.mermaidTheme,
+            config: options.mermaidConfig,
+          };
+          const html = generateMermaidHtml(codeToken.text, mermaidHtmlOptions);
+          return this.createHtmlMacroForContent(html);
         }
 
         // Handle regular code blocks
@@ -1204,6 +1226,30 @@ export class Converter {
               text: markdown.trim(),
             },
           ],
+        },
+      ],
+    };
+  }
+
+  /**
+   * Creates an ADF extension node for an HTML macro with arbitrary HTML content
+   * @param html The HTML content to include in the macro
+   * @returns An ADF extension node for the HTML macro
+   */
+  private createHtmlMacroForContent(html: string): ADFEntity {
+    return {
+      type: 'extension',
+      attrs: {
+        extensionType: 'com.atlassian.confluence.macro.core',
+        extensionKey: 'html',
+        parameters: {
+          macroParams: {},
+        },
+      },
+      content: [
+        {
+          type: 'text',
+          text: html,
         },
       ],
     };
