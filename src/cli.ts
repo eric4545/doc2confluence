@@ -99,7 +99,7 @@ program
       if (options.mermaidConfig) {
         try {
           mermaidConfig = JSON.parse(options.mermaidConfig);
-        } catch (e) {
+        } catch (_e) {
           console.error('Error: Invalid JSON in --mermaid-config');
           process.exit(1);
         }
@@ -257,7 +257,7 @@ program
         if (options.mermaidConfig) {
           try {
             mermaidConfig = JSON.parse(options.mermaidConfig);
-          } catch (e) {
+          } catch (_e) {
             console.error('Error: Invalid JSON in --mermaid-config');
             process.exit(1);
           }
