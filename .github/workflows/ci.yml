@@ -5,14 +5,17 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
-  build:
+  node:
+    name: Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [24.x]
+        node-version: [22.x, 24.x, 26.x]
 
     steps:
     - name: Checkout repository
@@ -39,9 +42,24 @@ jobs:
       env:
         CI: true
 
-    # Optional: Upload coverage reports if you have a test coverage tool
-    # - name: Upload coverage reports
-    #   uses: codecov/codecov-action@v3
-    #   with:
-    #     token: ${{ secrets.CODECOV_TOKEN }}
-    #     fail_ci_if_error: false
+  bun:
+    name: Bun
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - name: Install dependencies
+      run: bun install
+
+    - name: Biome Check
+      run: bunx @biomejs/biome ci src/
+
+    - name: Build
+      run: bun run build
