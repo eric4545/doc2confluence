@@ -1,7 +1,7 @@
 {
   "name": "doc2confluence",
   "version": "1.0.0",
-  "description": "Convert documentation files (Markdown, AsciiDoc, CSV) to Confluence ADF format",
+  "description": "Convert documentation files (Markdown, AsciiDoc, CSV) to Confluence ADF or wiki markup",
   "main": "dist/index.js",
   "bin": {
     "doc2conf": "dist/cli.js"
