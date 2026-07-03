@@ -7,7 +7,7 @@ import createDOMPurify from 'dompurify';
 import { JSDOM } from 'jsdom';
 import * as marked from 'marked';
 import * as showdown from 'showdown';
-import type { ConfluenceClient } from './confluence';
+import type { ConfluenceClient, ImageUploadResponse } from './confluence';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
@@ -210,6 +210,8 @@ export class Converter {
         };
 
       case 'paragraph': {
+        const paragraphToken = token as marked.Tokens.Paragraph;
+
         // Check for special blocks
         if (token.text.startsWith(':::expand')) {
           return this.parseExpandMacro(token.text, options);
@@ -217,6 +219,14 @@ export class Converter {
 
         if (token.text.startsWith('<table')) {
           return this.parseHtmlTable(token.text);
+        }
+
+        const standaloneImage = this.getStandaloneImageToken(paragraphToken);
+        if (standaloneImage) {
+          if (standaloneImage.href.endsWith('.csv')) {
+            return this.handleCsvImport(standaloneImage.href, options);
+          }
+          return this.handleImage(standaloneImage, options);
         }
 
         // Handle task list item
@@ -439,6 +449,19 @@ export class Converter {
       default:
         return null;
     }
+  }
+
+  private getStandaloneImageToken(token: marked.Tokens.Paragraph): marked.Tokens.Image | null {
+    if (!Array.isArray(token.tokens) || token.tokens.length !== 1) {
+      return null;
+    }
+
+    const [inlineToken] = token.tokens;
+    if (inlineToken.type !== 'image') {
+      return null;
+    }
+
+    return inlineToken as marked.Tokens.Image;
   }
 
   private parseInlineContent(text: string, options: ConversionOptions): ADFEntity[] {
@@ -779,7 +802,8 @@ export class Converter {
     token: marked.Tokens.Image,
     options: ConversionOptions
   ): Promise<ADFEntity | null> {
-    if (!options.uploadImages || !options.confluenceClient || !options.spaceKey) {
+    const hasUploadContext = Boolean(options.pageId || options.spaceKey);
+    if (!options.uploadImages || !options.confluenceClient || !hasUploadContext) {
       // Return as mediaSingle with media node inside
       return {
         type: 'mediaSingle',
@@ -801,7 +825,25 @@ export class Converter {
 
     try {
       const imagePath = path.resolve(options.basePath || '', token.href);
-      const response = await options.confluenceClient.uploadImage(options.spaceKey, imagePath);
+      const filename = path.basename(imagePath);
+      let response: ImageUploadResponse;
+      if (options.pageId) {
+        // Preferred: attach directly to the target page so Server ri:attachment resolves.
+        response = await options.confluenceClient.uploadAttachmentToPage(
+          options.pageId,
+          imagePath,
+          filename
+        );
+      } else if (options.spaceKey) {
+        response = await options.confluenceClient.uploadImage(options.spaceKey, imagePath);
+      } else {
+        // Unreachable: hasUploadContext guarantees pageId or spaceKey above.
+        throw new Error('No pageId or spaceKey available for image upload');
+      }
+      const uploadedFilename =
+        typeof response?.title === 'string' && response.title.length > 0
+          ? response.title
+          : filename;
 
       // Return as mediaSingle with media node inside
       return {
@@ -816,6 +858,7 @@ export class Converter {
               type: 'file',
               id: response.id,
               collection: 'contentId',
+              filename: uploadedFilename,
               alt: token.text || '',
             },
           },

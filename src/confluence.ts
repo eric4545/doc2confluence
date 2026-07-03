@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 // Import FormData dynamically to make testing easier
 // This will be mocked in tests
@@ -1066,25 +1066,16 @@ export class ConfluenceClient {
   ): Promise<ImageUploadResponse> {
     const endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceKey}/attachments`);
 
-    const form = new FormData();
-    try {
-      form.append('file', createReadStream(filePath));
-    } catch (error) {
-      if (process.env.NODE_ENV === 'test') {
-        this.log(`Test environment: Simulating file upload for ${filePath}`);
-      } else {
-        throw error;
-      }
-    }
-    form.append('comment', comment || 'Uploaded via md2confluence');
-    // Cloud might not support minorEdit in the same way or at all for attachments via v2
-    // form.append('minorEdit', 'true');
+    const { body, headers } = this.buildMultipartBody(filePath, path.basename(filePath), [
+      ['comment', comment || 'Uploaded via md2confluence'],
+      // Cloud might not support minorEdit in the same way or at all for attachments via v2.
+    ]);
 
     this.log(`Uploading cloud image to: ${endpoint}`);
     return this._fetchJson(endpoint, {
       method: 'POST',
-      headers: form.getHeaders(),
-      body: form as unknown as BodyInit,
+      headers,
+      body: body as unknown as BodyInit,
     }) as Promise<ImageUploadResponse>;
   }
 
@@ -1231,29 +1222,52 @@ export class ConfluenceClient {
     minorEdit?: boolean
   ): Promise<ImageUploadResponse> {
     const fullEndpoint = this.buildApiEndpoint(endpoint);
+    const fields: Array<[string, string]> = [['comment', comment || 'Uploaded via doc2confluence']];
+    if (minorEdit) {
+      fields.push(['minorEdit', 'true']);
+    }
+    const { body, headers } = this.buildMultipartBody(filePath, filename, fields);
 
+    this.log(`Uploading attachment: ${fullEndpoint}`);
+    return this._fetchJson(fullEndpoint, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'X-Atlassian-Token': 'no-check',
+      },
+      body: body as unknown as BodyInit,
+    }) as Promise<ImageUploadResponse>;
+  }
+
+  private buildMultipartBody(
+    filePath: string,
+    filename: string,
+    fields: Array<[string, string]>
+  ): { body: Buffer; headers: Record<string, string> } {
     const form = new FormData();
     try {
-      form.append('file', createReadStream(filePath), filename);
+      form.append('file', readFileSync(filePath), filename);
     } catch (error) {
       if (process.env.NODE_ENV === 'test') {
         this.log(`Test environment: Simulating file upload for ${filePath}`);
+        form.append('file', Buffer.from(''), filename);
       } else {
         throw error;
       }
     }
 
-    form.append('comment', comment || 'Uploaded via doc2confluence');
-    if (minorEdit) {
-      form.append('minorEdit', 'true');
+    for (const [name, value] of fields) {
+      form.append(name, value);
     }
 
-    this.log(`Uploading attachment: ${fullEndpoint}`);
-    return this._fetchJson(fullEndpoint, {
-      method: 'POST',
-      headers: form.getHeaders(),
-      body: form as unknown as BodyInit,
-    }) as Promise<ImageUploadResponse>;
+    const body = form.getBuffer();
+    return {
+      body,
+      headers: {
+        ...form.getHeaders(),
+        'Content-Length': String(body.length),
+      },
+    };
   }
 
   /**

@@ -712,6 +712,48 @@ describe('ConfluenceClient', () => {
       assert.strictEqual(countUploadPosts(), 1, 'should POST when content differs');
     });
 
+    it('sends no-check XSRF header for attachment uploads', async () => {
+      client = new ConfluenceClient(
+        'https://confluence.rakuten-it.com/confluence',
+        { personalAccessToken: 'test-pat' },
+        false,
+        'server'
+      );
+
+      const uploadResponse = { id: 'att-1', title: filename };
+      mockFetch.mock.mockImplementation((_url: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return Promise.resolve(
+            makeResponse({ json: mock.fn(() => Promise.resolve(uploadResponse)) })
+          );
+        }
+        return Promise.resolve(
+          makeResponse({ json: mock.fn(() => Promise.resolve({ results: [] })) })
+        );
+      });
+
+      await client.uploadAttachmentToPage('page-1', imagePath, filename);
+
+      const uploadCall = mockFetch.mock.calls.find((call) => {
+        const opts = call.arguments[1] as { method?: string } | undefined;
+        const url = call.arguments[0] as string;
+        return opts?.method === 'POST' && url.includes('/child/attachment');
+      });
+
+      assert.ok(uploadCall, 'expected attachment upload POST call');
+      const uploadOptions = uploadCall.arguments[1] as {
+        body?: unknown;
+        headers?: Record<string, string>;
+      };
+      const headers = uploadOptions.headers;
+      assert.strictEqual(headers?.['X-Atlassian-Token'], 'no-check');
+      assert.ok(
+        Buffer.isBuffer(uploadOptions.body),
+        'expected multipart upload body to be a Buffer'
+      );
+      assert.ok(Number(headers?.['Content-Length']) > 0, 'expected Content-Length header');
+    });
+
     it('retries once on HTTP 429 then succeeds', async () => {
       const okData = { results: [{ id: 'space-1', key: 'TEST', name: 'Test Space' }] };
       let calls = 0;
