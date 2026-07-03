@@ -745,5 +745,98 @@ describe('ConfluenceClient', () => {
       await assert.rejects(() => client.getSpaceByKey('TEST'), /429/);
       assert.strictEqual(mockFetch.mock.calls.length, 4, 'should attempt 4 times total');
     });
+
+    // Helper: build a minimal ADF doc with a single external-media image node.
+    const adfWithImage = (url: string) => ({
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'mediaSingle',
+          attrs: { layout: 'center' },
+          content: [{ type: 'media', attrs: { type: 'external', url, alt: 'diagram' } }],
+        },
+      ],
+    });
+
+    it('processAdfImages uploads a local image and rewrites the media node', async () => {
+      const uploadResponse = { id: 'att-42', title: filename };
+      mockFetch.mock.mockImplementation((_url: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return Promise.resolve(
+            makeResponse({ json: mock.fn(() => Promise.resolve(uploadResponse)) })
+          );
+        }
+        return Promise.resolve(
+          makeResponse({ json: mock.fn(() => Promise.resolve({ results: [] })) })
+        );
+      });
+
+      const adf = adfWithImage(imagePath);
+      const { changed } = await client.processAdfImages(adf as any, 'page-99', tmpDir);
+
+      assert.strictEqual(changed, true);
+      assert.strictEqual(countUploadPosts(), 1, 'should upload the local image once');
+      const media = (adf.content[0].content as any[])[0];
+      assert.strictEqual(media.attrs.type, 'file');
+      assert.strictEqual(media.attrs.id, 'att-42');
+      assert.strictEqual(media.attrs.collection, 'contentId');
+      assert.strictEqual(media.attrs.filename, filename);
+      assert.strictEqual(media.attrs.url, undefined, 'local url should be dropped');
+      assert.strictEqual(media.attrs.alt, 'diagram', 'alt text should be preserved');
+    });
+
+    it('processAdfImages leaves external http(s) images untouched', async () => {
+      const adf = adfWithImage('https://example.com/remote.png');
+      const { changed } = await client.processAdfImages(adf as any, 'page-99', tmpDir);
+
+      assert.strictEqual(changed, false);
+      assert.strictEqual(countUploadPosts(), 0, 'should not upload an external URL');
+      const media = (adf.content[0].content as any[])[0];
+      assert.strictEqual(media.attrs.type, 'external');
+      assert.strictEqual(media.attrs.url, 'https://example.com/remote.png');
+    });
+
+    it('processAdfImages uploads a repeated local image only once (dedup)', async () => {
+      const uploadResponse = { id: 'att-7', title: filename };
+      mockFetch.mock.mockImplementation((_url: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return Promise.resolve(
+            makeResponse({ json: mock.fn(() => Promise.resolve(uploadResponse)) })
+          );
+        }
+        return Promise.resolve(
+          makeResponse({ json: mock.fn(() => Promise.resolve({ results: [] })) })
+        );
+      });
+
+      // Two media nodes referencing the same local file.
+      const adf = {
+        type: 'doc',
+        version: 1,
+        content: [
+          {
+            type: 'mediaSingle',
+            attrs: { layout: 'center' },
+            content: [{ type: 'media', attrs: { type: 'external', url: imagePath, alt: 'a' } }],
+          },
+          {
+            type: 'mediaSingle',
+            attrs: { layout: 'center' },
+            content: [{ type: 'media', attrs: { type: 'external', url: imagePath, alt: 'b' } }],
+          },
+        ],
+      };
+
+      const { changed } = await client.processAdfImages(adf as any, 'page-99', tmpDir);
+
+      assert.strictEqual(changed, true);
+      assert.strictEqual(countUploadPosts(), 1, 'same image should upload only once');
+      for (const single of adf.content) {
+        const media = (single.content as any[])[0];
+        assert.strictEqual(media.attrs.type, 'file');
+        assert.strictEqual(media.attrs.id, 'att-7');
+      }
+    });
   });
 });

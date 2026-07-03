@@ -1319,6 +1319,98 @@ export class ConfluenceClient {
   }
 
   /**
+   * Upload locally-referenced images in an ADF document as attachments on the given page,
+   * rewriting each external media node into a file/attachment reference.
+   *
+   * The converter emits local images as `media` nodes with `attrs.type === 'external'` and a
+   * local `url` (e.g. `images/diagram.png`). Those cannot be resolved by Confluence — on Server
+   * they render as `<ac:image><ri:url .../></ac:image>` pointing at a bogus path. This pass
+   * uploads each such image to the target page (so `ri:attachment ri:filename` resolves) and
+   * rewrites the node to a `file` reference carrying both the attachment `id` (Cloud media) and
+   * `filename` (Server storage). External http(s)/data URLs are left untouched.
+   *
+   * @param adf The ADF document to process (mutated in place)
+   * @param pageId The ID of the page to attach images to
+   * @param baseDir The base directory to resolve relative image paths
+   * @returns Whether any media node was uploaded and rewritten
+   */
+  async processAdfImages(
+    adf: ADFEntity,
+    pageId: string,
+    baseDir: string
+  ): Promise<{ changed: boolean }> {
+    // Collect all media nodes referencing a local file.
+    const localMediaNodes: ADFEntity[] = [];
+    const collect = (node: ADFEntity): void => {
+      if (node.type === 'media') {
+        const attrs = node.attrs as { type?: string; url?: string } | undefined;
+        const url = attrs?.url;
+        if (
+          attrs?.type === 'external' &&
+          typeof url === 'string' &&
+          url.length > 0 &&
+          !url.startsWith('http://') &&
+          !url.startsWith('https://') &&
+          !url.startsWith('data:')
+        ) {
+          localMediaNodes.push(node);
+        }
+      }
+      if (Array.isArray(node.content)) {
+        for (const child of node.content) {
+          collect(child);
+        }
+      }
+    };
+    collect(adf);
+
+    if (localMediaNodes.length === 0) {
+      this.log('No local images found in ADF content');
+      return { changed: false };
+    }
+
+    this.log(`Found ${localMediaNodes.length} local image(s) in ADF content`);
+    let changed = false;
+
+    for (const node of localMediaNodes) {
+      const attrs = node.attrs as {
+        type?: string;
+        url?: string;
+        alt?: string;
+        id?: string;
+        collection?: string;
+        filename?: string;
+      };
+      const imagePath = attrs.url as string;
+
+      try {
+        const fullPath = path.resolve(baseDir, imagePath);
+        const filename = path.basename(imagePath);
+
+        this.log(`Uploading image: ${fullPath} as ${filename}`);
+        const response = await this.uploadAttachmentToPage(pageId, fullPath, filename);
+
+        // Rewrite the node into a file/attachment reference. Keep `alt`; drop the local `url`.
+        node.attrs = {
+          type: 'file',
+          id: response.id,
+          collection: 'contentId',
+          filename,
+          ...(attrs.alt ? { alt: attrs.alt } : {}),
+        };
+        changed = true;
+
+        this.log(`✓ Uploaded and updated reference: ${imagePath} -> ${filename}`);
+      } catch (error) {
+        this.log(`✗ Failed to upload image ${imagePath}: ${error}`);
+        // Leave the node as an external reference and continue with the rest.
+      }
+    }
+
+    return { changed };
+  }
+
+  /**
    * Converts Atlassian Document Format (ADF) to Confluence Storage Format
    * This is needed for Server/Data Center API which doesn't support ADF directly
    */

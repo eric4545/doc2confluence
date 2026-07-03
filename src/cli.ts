@@ -392,6 +392,41 @@ program
         } else if (isDebugMode) {
           console.log('DEBUG: No images with paths found in wiki markup');
         }
+      } else if (content.format === 'adf' && options.uploadImages) {
+        // Upload locally-referenced images now that the page (and its ID) exists, then
+        // rewrite the ADF media nodes to point at the uploaded attachments.
+        const baseDir = path.dirname(path.resolve(file));
+
+        if (isDebugMode) {
+          console.log('DEBUG: Processing ADF images...');
+          console.log(`DEBUG: Base directory: ${baseDir}`);
+        }
+
+        try {
+          const { changed } = await client.processAdfImages(content.data, responseId, baseDir);
+
+          if (changed) {
+            console.log('Processing and uploading images...');
+
+            // Get current page to get version number
+            const currentPage = await client.getPage(responseId);
+            const currentVersion = currentPage.version?.number || 1;
+
+            pageResponse = await client.updatePage(
+              responseId,
+              pageTitle,
+              content.data,
+              currentVersion + 1
+            );
+
+            console.log('✓ Images uploaded and references updated');
+          } else if (isDebugMode) {
+            console.log('DEBUG: No local images found in ADF content');
+          }
+        } catch (error) {
+          console.warn('⚠️  Warning: Failed to process images:', error);
+          // Continue even if image processing fails
+        }
       }
 
       console.log(`Successfully pushed to Confluence (Page ID: ${responseId})`);
