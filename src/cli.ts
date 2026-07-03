@@ -28,6 +28,44 @@ interface ConvertOptions {
   validate?: boolean;
 }
 
+function createPlaceholderDocument(message = 'Uploading content...'): ADFEntity {
+  return {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: message }],
+      },
+    ],
+  };
+}
+
+function derivePageTitle(adf: ADFEntity, file: string, explicitTitle?: string): string {
+  if (explicitTitle) {
+    return explicitTitle;
+  }
+
+  if (adf?.content) {
+    const firstHeading = adf.content.find(
+      (node: ADFEntity) => node.type === 'heading' && node.content && node.content.length > 0
+    );
+
+    if (firstHeading?.content) {
+      const text = firstHeading.content
+        .filter((c: ADFEntity) => c.type === 'text')
+        .map((c: ADFEntity) => c.text)
+        .join('');
+
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  return path.basename(file, path.extname(file));
+}
+
 const program = new Command();
 
 // Global debug flag
@@ -211,9 +249,10 @@ program
         adf = await convertFile(file, format, {
           generateToc: options.toc,
           parseInlineCards: options.inlineCards,
-          uploadImages: options.uploadImages,
+          uploadImages: false,
           useOfficialSchema: options.useOfficialSchema,
           macroFormat: metadata.macroFormat,
+          instanceType: config.instanceType,
         });
       }
 
@@ -240,48 +279,62 @@ program
         config.instanceType
       );
 
-      // Extract title from metadata, command line option, first heading, or filename
-      let pageTitle = metadata.title;
-      if (isDebugMode && pageTitle) {
-        console.log(`DEBUG: Using title from metadata: "${pageTitle}"`);
+      const pageTitle = derivePageTitle(adf, file, metadata.title);
+      if (isDebugMode) {
+        console.log(`DEBUG: Using page title: "${pageTitle}"`);
       }
 
-      if (!pageTitle && adf && adf.content) {
-        // Look for the first heading in the ADF content
-        const firstHeading = adf.content.find(
-          (node: ADFEntity) => node.type === 'heading' && node.content && node.content.length > 0
-        );
-
-        if (firstHeading?.content) {
-          // Extract text from the heading
-          const text = firstHeading.content
-            .filter((c: ADFEntity) => c.type === 'text')
-            .map((c: ADFEntity) => c.text)
-            .join('');
-
-          if (text) {
-            pageTitle = text;
+      let targetPageId = metadata.pageId ? String(metadata.pageId) : undefined;
+      if (
+        options.uploadImages &&
+        !file.endsWith('.adf.json') &&
+        !file.endsWith('.confluence') &&
+        !file.endsWith('.wiki')
+      ) {
+        if (!targetPageId) {
+          const existingPage = await client.getPageByTitle(spaceKey, pageTitle, parentId);
+          if (existingPage?.id) {
+            targetPageId = existingPage.id;
             if (isDebugMode) {
-              console.log(`DEBUG: Using first heading as title: "${pageTitle}"`);
+              console.log(`DEBUG: Reusing existing page for image uploads: ${targetPageId}`);
             }
           }
         }
-      }
 
-      // Fall back to filename if no heading found
-      if (!pageTitle) {
-        pageTitle = path.basename(file, path.extname(file));
-        if (isDebugMode) {
-          console.log(`DEBUG: No heading found, using filename as title: "${pageTitle}"`);
+        if (!targetPageId) {
+          if (isDebugMode) {
+            console.log('DEBUG: Creating placeholder page to obtain page ID for image uploads');
+          }
+
+          const placeholderPage = await client.createPage(
+            spaceKey,
+            pageTitle,
+            createPlaceholderDocument(),
+            parentId
+          );
+          targetPageId = placeholderPage.id;
         }
+
+        const format = options.format as InputFormat;
+        adf = await convertFile(file, format, {
+          generateToc: options.toc,
+          parseInlineCards: options.inlineCards,
+          uploadImages: true,
+          useOfficialSchema: options.useOfficialSchema,
+          macroFormat: metadata.macroFormat,
+          instanceType: config.instanceType,
+          basePath: path.dirname(path.resolve(file)),
+          confluenceClient: client,
+          spaceKey,
+          pageId: targetPageId,
+        });
       }
 
       if (isDebugMode) {
         console.log(`DEBUG: Pushing to Confluence. SpaceKey: ${spaceKey}, Title: ${pageTitle}`);
       }
 
-      // Use pageId from metadata if available
-      const pageIdParam = metadata.pageId ? String(metadata.pageId) : undefined;
+      const pageIdParam = targetPageId;
 
       // Determine content format based on file type and content
       let content: { format: 'adf'; data: ADFEntity } | { format: 'wiki'; data: string };
@@ -391,6 +444,41 @@ program
           }
         } else if (isDebugMode) {
           console.log('DEBUG: No images with paths found in wiki markup');
+        }
+      } else if (content.format === 'adf' && options.uploadImages) {
+        // Upload locally-referenced images now that the page (and its ID) exists, then
+        // rewrite the ADF media nodes to point at the uploaded attachments.
+        const baseDir = path.dirname(path.resolve(file));
+
+        if (isDebugMode) {
+          console.log('DEBUG: Processing ADF images...');
+          console.log(`DEBUG: Base directory: ${baseDir}`);
+        }
+
+        try {
+          const { changed } = await client.processAdfImages(content.data, responseId, baseDir);
+
+          if (changed) {
+            console.log('Processing and uploading images...');
+
+            // Get current page to get version number
+            const currentPage = await client.getPage(responseId);
+            const currentVersion = currentPage.version?.number || 1;
+
+            pageResponse = await client.updatePage(
+              responseId,
+              pageTitle,
+              content.data,
+              currentVersion + 1
+            );
+
+            console.log('✓ Images uploaded and references updated');
+          } else if (isDebugMode) {
+            console.log('DEBUG: No local images found in ADF content');
+          }
+        } catch (error) {
+          console.warn('⚠️  Warning: Failed to process images:', error);
+          // Continue even if image processing fails
         }
       }
 

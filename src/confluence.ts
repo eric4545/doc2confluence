@@ -1,4 +1,5 @@
-import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 // Import FormData dynamically to make testing easier
 // This will be mocked in tests
@@ -102,6 +103,9 @@ export class ConfluenceClient {
   private debug: boolean;
   private authType: 'basic' | 'pat';
   private instanceType: ConfluenceInstanceType;
+  // Per-run cache of uploaded attachments, keyed by `${scope}:${filename}:${sha256}`.
+  // Prevents re-uploading the same image multiple times within a single run.
+  private uploadCache = new Map<string, ImageUploadResponse>();
 
   constructor(
     baseUrl: string,
@@ -181,6 +185,32 @@ export class ConfluenceClient {
     }
   }
 
+  // Small delay helper for backoff. Skips real waiting in tests (fetch is mocked).
+  private sleep(ms: number): Promise<void> {
+    if (process.env.NODE_ENV === 'test' || ms <= 0) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Parse a Retry-After header (delta-seconds) into milliseconds, if present.
+  private parseRetryAfter(response: Response): number | null {
+    const header = response.headers?.get?.('retry-after');
+    if (!header) {
+      return null;
+    }
+    const seconds = Number(header);
+    if (Number.isFinite(seconds)) {
+      return Math.max(0, seconds * 1000);
+    }
+    // Retry-After can also be an HTTP date.
+    const dateMs = Date.parse(header);
+    if (!Number.isNaN(dateMs)) {
+      return Math.max(0, dateMs - Date.now());
+    }
+    return null;
+  }
+
   private async _fetchJson(url: string, fetchOptions: RequestInit = {}): Promise<unknown> {
     // Ensure headers from getAuthHeaders are merged with any provided in fetchOptions
     const headers = {
@@ -198,10 +228,31 @@ export class ConfluenceClient {
       this.log(`With options: ${JSON.stringify(loggableOptions, null, 2)}`);
     }
 
-    const response = await fetch(url, {
-      ...fetchOptions, // Spread options first
-      headers, // Then override headers
-    });
+    // Retry on rate limiting (429) and transient unavailability (503).
+    // Honor Retry-After when provided, otherwise back off exponentially: 2s, 4s, 8s.
+    const maxAttempts = 4;
+    let response: Response = null as unknown as Response;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      response = await fetch(url, {
+        ...fetchOptions, // Spread options first
+        headers, // Then override headers
+      });
+
+      if (response.status !== 429 && response.status !== 503) {
+        break;
+      }
+      if (attempt === maxAttempts) {
+        break; // Out of retries; fall through to the error handling below.
+      }
+
+      const retryAfterMs = this.parseRetryAfter(response);
+      const backoffMs = retryAfterMs ?? 2 ** attempt * 1000;
+      this.log(
+        `Rate limited (${response.status}) on ${url}. Retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms.`
+      );
+      await this.sleep(backoffMs);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -877,40 +928,135 @@ export class ConfluenceClient {
     return this._getSpaceByIdCloud(spaceId);
   }
 
-  private async _uploadImageServer(
-    spaceKey: string,
-    filePath: string,
-    comment?: string
-  ): Promise<ImageUploadResponse> {
-    const space = await this.getSpaceByKey(spaceKey);
-    if (!space) {
-      throw new Error(`Space with key "${spaceKey}" not found for Server image upload.`);
-    }
-    const homePageId = space.homepage ? space.homepage.id : space.homepageId;
-    if (!homePageId) {
-      throw new Error(`Could not find home page for space "${spaceKey}" for Server image upload.`);
-    }
-    const endpoint = this.buildApiEndpoint(`/content/${homePageId}/child/attachment`);
+  // --- Image/attachment deduplication helpers ---
 
-    const form = new FormData();
+  // Prefix used to embed a content hash in an attachment's comment so re-runs can
+  // detect whether an existing attachment has the same content as the local file.
+  private static readonly HASH_COMMENT_PREFIX = 'sha256:';
+
+  /** Compute the SHA-256 hex digest of a file's contents. */
+  private hashFile(filePath: string): string | null {
     try {
-      form.append('file', createReadStream(filePath));
+      return createHash('sha256').update(readFileSync(filePath)).digest('hex');
     } catch (error) {
+      // In tests the file may not exist; upstream callers simulate the upload.
       if (process.env.NODE_ENV === 'test') {
-        this.log(`Test environment: Simulating file upload for ${filePath}`);
+        this.log(`Test environment: skipping hash for ${filePath}`);
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** Build a comment string that embeds the content hash for later dedup. */
+  private buildAttachmentComment(baseComment: string | undefined, hash: string | null): string {
+    const comment = baseComment || 'Uploaded via doc2confluence';
+    if (!hash) {
+      return comment;
+    }
+    return `${comment} ${ConfluenceClient.HASH_COMMENT_PREFIX}${hash}`;
+  }
+
+  /**
+   * List the current attachments for a page (Cloud v2 or Server/DC), optionally
+   * filtered by filename. Returns the raw result objects.
+   */
+  private async getPageAttachments(
+    pageId: string,
+    filename?: string
+  ): Promise<Record<string, unknown>[]> {
+    const effectiveInstanceType = this.getEffectiveInstanceType();
+    let endpoint: string;
+    if (effectiveInstanceType === 'server') {
+      endpoint = this.buildApiEndpoint(`/content/${pageId}/child/attachment`);
+      const params = new URLSearchParams({ expand: 'version,metadata,extensions' });
+      if (filename) {
+        params.set('filename', filename);
+      }
+      endpoint = `${endpoint}?${params}`;
+    } else {
+      endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}/attachments`);
+      const params = new URLSearchParams({ limit: '250' });
+      if (filename) {
+        params.set('filename', filename);
+      }
+      endpoint = `${endpoint}?${params}`;
+    }
+
+    try {
+      const data = (await this._fetchJson(endpoint)) as { results?: Record<string, unknown>[] };
+      return data?.results || [];
+    } catch (error) {
+      // Existence check is best-effort: on failure, fall back to uploading.
+      this.log(`Could not list attachments for page ${pageId}: ${error}`);
+      return [];
+    }
+  }
+
+  /** Extract the comment text from an attachment result across Cloud/Server shapes. */
+  private getAttachmentComment(attachment: Record<string, unknown>): string {
+    if (typeof attachment.comment === 'string') {
+      return attachment.comment;
+    }
+    const metadata = attachment.metadata as { comment?: unknown } | undefined;
+    if (metadata && typeof metadata.comment === 'string') {
+      return metadata.comment;
+    }
+    const extensions = attachment.extensions as { comment?: unknown } | undefined;
+    if (extensions && typeof extensions.comment === 'string') {
+      return extensions.comment;
+    }
+    return '';
+  }
+
+  /** Extract the file size from an attachment result across Cloud/Server shapes. */
+  private getAttachmentFileSize(attachment: Record<string, unknown>): number | null {
+    if (typeof attachment.fileSize === 'number') {
+      return attachment.fileSize;
+    }
+    const extensions = attachment.extensions as { fileSize?: unknown } | undefined;
+    if (extensions && typeof extensions.fileSize === 'number') {
+      return extensions.fileSize;
+    }
+    return null;
+  }
+
+  /**
+   * Find an existing attachment on a page that matches the given filename and content.
+   * "Matches content" means: the stored sha256 marker equals `hash` when present, or
+   * (for older uploads without a marker) the file size matches. Returns the matching
+   * attachment as an ImageUploadResponse, or null if none matches.
+   */
+  private async findExistingAttachment(
+    pageId: string,
+    filename: string,
+    hash: string | null,
+    fileSize: number | null
+  ): Promise<ImageUploadResponse | null> {
+    const attachments = await this.getPageAttachments(pageId, filename);
+    for (const attachment of attachments) {
+      if (attachment.title !== filename) {
+        continue;
+      }
+      const comment = this.getAttachmentComment(attachment);
+      const storedHash = comment.includes(ConfluenceClient.HASH_COMMENT_PREFIX)
+        ? comment.split(ConfluenceClient.HASH_COMMENT_PREFIX)[1]?.trim().split(/\s+/)[0]
+        : null;
+
+      let isSame = false;
+      if (storedHash && hash) {
+        isSame = storedHash === hash;
       } else {
-        throw error;
+        // No stored hash to compare against; fall back to file size when available.
+        const existingSize = this.getAttachmentFileSize(attachment);
+        isSame = existingSize != null && fileSize != null && existingSize === fileSize;
+      }
+
+      if (isSame) {
+        return attachment as unknown as ImageUploadResponse;
       }
     }
-    form.append('comment', comment || 'Uploaded via md2confluence');
-    form.append('minorEdit', 'true');
-
-    this.log(`Uploading server image to: ${endpoint}`);
-    return this._fetchJson(endpoint, {
-      method: 'POST',
-      headers: form.getHeaders(), // form-data library provides getHeaders()
-      body: form as unknown as BodyInit, // Type assertion for fetch compatibility
-    }) as Promise<ImageUploadResponse>;
+    return null;
   }
 
   private async _uploadImageCloud(
@@ -920,25 +1066,16 @@ export class ConfluenceClient {
   ): Promise<ImageUploadResponse> {
     const endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceKey}/attachments`);
 
-    const form = new FormData();
-    try {
-      form.append('file', createReadStream(filePath));
-    } catch (error) {
-      if (process.env.NODE_ENV === 'test') {
-        this.log(`Test environment: Simulating file upload for ${filePath}`);
-      } else {
-        throw error;
-      }
-    }
-    form.append('comment', comment || 'Uploaded via md2confluence');
-    // Cloud might not support minorEdit in the same way or at all for attachments via v2
-    // form.append('minorEdit', 'true');
+    const { body, headers } = this.buildMultipartBody(filePath, path.basename(filePath), [
+      ['comment', comment || 'Uploaded via md2confluence'],
+      // Cloud might not support minorEdit in the same way or at all for attachments via v2.
+    ]);
 
     this.log(`Uploading cloud image to: ${endpoint}`);
     return this._fetchJson(endpoint, {
       method: 'POST',
-      headers: form.getHeaders(),
-      body: form as unknown as BodyInit,
+      headers,
+      body: body as unknown as BodyInit,
     }) as Promise<ImageUploadResponse>;
   }
 
@@ -948,10 +1085,33 @@ export class ConfluenceClient {
     comment?: string
   ): Promise<ImageUploadResponse> {
     const effectiveInstanceType = this.getEffectiveInstanceType();
+    const filename = path.basename(filePath);
+
     if (effectiveInstanceType === 'server') {
-      return this._uploadImageServer(spaceKey, filePath, comment);
+      // Server attaches images to the space homepage, which is a normal page — so we
+      // can reuse the page-based upload path and get full dedup (cache + remote check).
+      const space = await this.getSpaceByKey(spaceKey);
+      if (!space) {
+        throw new Error(`Space with key "${spaceKey}" not found for Server image upload.`);
+      }
+      const homePageId = space.homepage ? space.homepage.id : space.homepageId;
+      if (!homePageId) {
+        throw new Error(
+          `Could not find home page for space "${spaceKey}" for Server image upload.`
+        );
+      }
+      return this.uploadAttachmentToPage(homePageId, filePath, filename, comment);
     }
-    return this._uploadImageCloud(spaceKey, filePath, comment);
+
+    // Cloud attaches to the space (not a page), so we dedup via the in-memory cache only.
+    return this._dedupUpload(
+      `space:${spaceKey}`,
+      null,
+      filePath,
+      filename,
+      comment,
+      (commentWithHash) => this._uploadImageCloud(spaceKey, filePath, commentWithHash)
+    );
   }
 
   /**
@@ -971,23 +1131,84 @@ export class ConfluenceClient {
     const effectiveInstanceType = this.getEffectiveInstanceType();
     const actualFilename = filename || path.basename(filePath);
 
-    if (effectiveInstanceType === 'server') {
-      return this._uploadAttachment(
-        `/content/${pageId}/child/attachment`,
-        filePath,
-        actualFilename,
-        comment,
-        true // minorEdit for server
-      );
-    }
-
-    return this._uploadAttachment(
-      `/api/v2/pages/${pageId}/attachments`,
+    return this._dedupUpload(
+      `page:${pageId}`,
+      pageId,
       filePath,
       actualFilename,
       comment,
-      false // no minorEdit for cloud
+      (commentWithHash) => {
+        if (effectiveInstanceType === 'server') {
+          return this._uploadAttachment(
+            `/content/${pageId}/child/attachment`,
+            filePath,
+            actualFilename,
+            commentWithHash,
+            true // minorEdit for server
+          );
+        }
+        return this._uploadAttachment(
+          `/api/v2/pages/${pageId}/attachments`,
+          filePath,
+          actualFilename,
+          commentWithHash,
+          false // no minorEdit for cloud
+        );
+      }
     );
+  }
+
+  /** Return a file's size in bytes, or null if it can't be read (e.g. in tests). */
+  private getFileSize(filePath: string): number | null {
+    try {
+      return statSync(filePath).size;
+    } catch (error) {
+      if (process.env.NODE_ENV === 'test') {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Deduplicating upload wrapper. Skips the network upload when the same content is
+   * already known (per-run cache) or already present on the page (remote check), and
+   * embeds the content hash in the attachment comment so future runs can detect it.
+   *
+   * @param scope Cache-key scope, e.g. `page:{id}` or `space:{key}`
+   * @param remotePageId Page to query for existing attachments, or null to skip the remote check
+   * @param doUpload Performs the actual upload with the hash-annotated comment
+   */
+  private async _dedupUpload(
+    scope: string,
+    remotePageId: string | null,
+    filePath: string,
+    filename: string,
+    comment: string | undefined,
+    doUpload: (commentWithHash: string) => Promise<ImageUploadResponse>
+  ): Promise<ImageUploadResponse> {
+    const hash = this.hashFile(filePath);
+    const cacheKey = `${scope}:${filename}:${hash ?? 'nohash'}`;
+
+    const cached = this.uploadCache.get(cacheKey);
+    if (cached) {
+      this.log(`Skipping upload (already uploaded this run): ${filename}`);
+      return cached;
+    }
+
+    if (remotePageId) {
+      const fileSize = this.getFileSize(filePath);
+      const existing = await this.findExistingAttachment(remotePageId, filename, hash, fileSize);
+      if (existing) {
+        this.log(`Skipping upload (identical attachment already present): ${filename}`);
+        this.uploadCache.set(cacheKey, existing);
+        return existing;
+      }
+    }
+
+    const response = await doUpload(this.buildAttachmentComment(comment, hash));
+    this.uploadCache.set(cacheKey, response);
+    return response;
   }
 
   /**
@@ -1001,29 +1222,52 @@ export class ConfluenceClient {
     minorEdit?: boolean
   ): Promise<ImageUploadResponse> {
     const fullEndpoint = this.buildApiEndpoint(endpoint);
+    const fields: Array<[string, string]> = [['comment', comment || 'Uploaded via doc2confluence']];
+    if (minorEdit) {
+      fields.push(['minorEdit', 'true']);
+    }
+    const { body, headers } = this.buildMultipartBody(filePath, filename, fields);
 
+    this.log(`Uploading attachment: ${fullEndpoint}`);
+    return this._fetchJson(fullEndpoint, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'X-Atlassian-Token': 'no-check',
+      },
+      body: body as unknown as BodyInit,
+    }) as Promise<ImageUploadResponse>;
+  }
+
+  private buildMultipartBody(
+    filePath: string,
+    filename: string,
+    fields: Array<[string, string]>
+  ): { body: Buffer; headers: Record<string, string> } {
     const form = new FormData();
     try {
-      form.append('file', createReadStream(filePath), filename);
+      form.append('file', readFileSync(filePath), filename);
     } catch (error) {
       if (process.env.NODE_ENV === 'test') {
         this.log(`Test environment: Simulating file upload for ${filePath}`);
+        form.append('file', Buffer.from(''), filename);
       } else {
         throw error;
       }
     }
 
-    form.append('comment', comment || 'Uploaded via doc2confluence');
-    if (minorEdit) {
-      form.append('minorEdit', 'true');
+    for (const [name, value] of fields) {
+      form.append(name, value);
     }
 
-    this.log(`Uploading attachment: ${fullEndpoint}`);
-    return this._fetchJson(fullEndpoint, {
-      method: 'POST',
-      headers: form.getHeaders(),
-      body: form as unknown as BodyInit,
-    }) as Promise<ImageUploadResponse>;
+    const body = form.getBuffer();
+    return {
+      body,
+      headers: {
+        ...form.getHeaders(),
+        'Content-Length': String(body.length),
+      },
+    };
   }
 
   /**
@@ -1086,6 +1330,98 @@ export class ConfluenceClient {
     }
 
     return processedMarkup;
+  }
+
+  /**
+   * Upload locally-referenced images in an ADF document as attachments on the given page,
+   * rewriting each external media node into a file/attachment reference.
+   *
+   * The converter emits local images as `media` nodes with `attrs.type === 'external'` and a
+   * local `url` (e.g. `images/diagram.png`). Those cannot be resolved by Confluence — on Server
+   * they render as `<ac:image><ri:url .../></ac:image>` pointing at a bogus path. This pass
+   * uploads each such image to the target page (so `ri:attachment ri:filename` resolves) and
+   * rewrites the node to a `file` reference carrying both the attachment `id` (Cloud media) and
+   * `filename` (Server storage). External http(s)/data URLs are left untouched.
+   *
+   * @param adf The ADF document to process (mutated in place)
+   * @param pageId The ID of the page to attach images to
+   * @param baseDir The base directory to resolve relative image paths
+   * @returns Whether any media node was uploaded and rewritten
+   */
+  async processAdfImages(
+    adf: ADFEntity,
+    pageId: string,
+    baseDir: string
+  ): Promise<{ changed: boolean }> {
+    // Collect all media nodes referencing a local file.
+    const localMediaNodes: ADFEntity[] = [];
+    const collect = (node: ADFEntity): void => {
+      if (node.type === 'media') {
+        const attrs = node.attrs as { type?: string; url?: string } | undefined;
+        const url = attrs?.url;
+        if (
+          attrs?.type === 'external' &&
+          typeof url === 'string' &&
+          url.length > 0 &&
+          !url.startsWith('http://') &&
+          !url.startsWith('https://') &&
+          !url.startsWith('data:')
+        ) {
+          localMediaNodes.push(node);
+        }
+      }
+      if (Array.isArray(node.content)) {
+        for (const child of node.content) {
+          collect(child);
+        }
+      }
+    };
+    collect(adf);
+
+    if (localMediaNodes.length === 0) {
+      this.log('No local images found in ADF content');
+      return { changed: false };
+    }
+
+    this.log(`Found ${localMediaNodes.length} local image(s) in ADF content`);
+    let changed = false;
+
+    for (const node of localMediaNodes) {
+      const attrs = node.attrs as {
+        type?: string;
+        url?: string;
+        alt?: string;
+        id?: string;
+        collection?: string;
+        filename?: string;
+      };
+      const imagePath = attrs.url as string;
+
+      try {
+        const fullPath = path.resolve(baseDir, imagePath);
+        const filename = path.basename(imagePath);
+
+        this.log(`Uploading image: ${fullPath} as ${filename}`);
+        const response = await this.uploadAttachmentToPage(pageId, fullPath, filename);
+
+        // Rewrite the node into a file/attachment reference. Keep `alt`; drop the local `url`.
+        node.attrs = {
+          type: 'file',
+          id: response.id,
+          collection: 'contentId',
+          filename,
+          ...(attrs.alt ? { alt: attrs.alt } : {}),
+        };
+        changed = true;
+
+        this.log(`✓ Uploaded and updated reference: ${imagePath} -> ${filename}`);
+      } catch (error) {
+        this.log(`✗ Failed to upload image ${imagePath}: ${error}`);
+        // Leave the node as an external reference and continue with the rest.
+      }
+    }
+
+    return { changed };
   }
 
   /**

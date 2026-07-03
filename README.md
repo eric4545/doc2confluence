@@ -515,6 +515,15 @@ Options:
   --use-official-schema         Validate against official ADF schema
 ```
 
+> **Image upload deduplication & rate limiting:** When `--upload-images` is enabled,
+> each image is only uploaded once. An image referenced multiple times in a run is
+> uploaded a single time (in-memory cache), and on re-runs an image whose content is
+> unchanged is skipped entirely — the existing attachment is reused instead of being
+> re-uploaded. Content identity is tracked via a `sha256:` marker stored in the
+> attachment comment (with a file-size fallback for older uploads). All API calls also
+> retry automatically on `HTTP 429 Too Many Requests` (honoring `Retry-After`) and `503`,
+> which together greatly reduce the chance of hitting Confluence rate limits.
+
 ## Input Formats
 
 ### Markdown
