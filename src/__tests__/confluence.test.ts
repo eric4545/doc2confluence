@@ -2,6 +2,10 @@
 process.env.NODE_ENV = 'test';
 
 import assert from 'node:assert';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { ConfluenceClient } from '../confluence';
 
@@ -589,5 +593,157 @@ describe('ConfluenceClient', () => {
     });
 
     // Add more tests for other ADF to Storage conversions here if needed
+  });
+
+  describe('Image upload deduplication and rate limiting', () => {
+    let client: ConfluenceClient;
+    let tmpDir: string;
+    let imagePath: string;
+    let imageHash: string;
+    const filename = 'diagram.png';
+
+    // Helper: build a mock Response with a headers.get() implementation.
+    const makeResponse = (
+      overrides: Partial<MockResponse> & { retryAfter?: string }
+    ): MockResponse => ({
+      ok: overrides.ok ?? true,
+      status: overrides.status ?? 200,
+      statusText: overrides.statusText ?? 'OK',
+      json: overrides.json ?? mock.fn(() => Promise.resolve({})),
+      text: overrides.text ?? mock.fn(() => Promise.resolve('')),
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === 'retry-after' ? (overrides.retryAfter ?? null) : null,
+      } as unknown as Headers,
+    });
+
+    // Count how many upload POSTs were issued (the attachment endpoints).
+    const countUploadPosts = () =>
+      mockFetch.mock.calls.filter((call) => {
+        const opts = call.arguments[1] as { method?: string } | undefined;
+        const url = call.arguments[0] as string;
+        return opts?.method === 'POST' && url.includes('attachment');
+      }).length;
+
+    beforeEach(() => {
+      client = new ConfluenceClient(
+        'https://example.atlassian.net',
+        { email: 'test@example.com', apiToken: 'test-token' },
+        false,
+        'cloud'
+      );
+      tmpDir = mkdtempSync(path.join(tmpdir(), 'doc2conf-img-'));
+      imagePath = path.join(tmpDir, filename);
+      const contents = Buffer.from('fake-png-bytes');
+      writeFileSync(imagePath, contents);
+      imageHash = createHash('sha256').update(contents).digest('hex');
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('uploads the same image only once within a run (in-memory cache)', async () => {
+      const uploadResponse = { id: 'att-1', title: filename };
+      // GET list (no existing) then POST upload; second call should hit the cache.
+      mockFetch.mock.mockImplementation((_url: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return Promise.resolve(
+            makeResponse({ json: mock.fn(() => Promise.resolve(uploadResponse)) })
+          );
+        }
+        return Promise.resolve(
+          makeResponse({ json: mock.fn(() => Promise.resolve({ results: [] })) })
+        );
+      });
+
+      const first = await client.uploadAttachmentToPage('page-1', imagePath, filename);
+      const second = await client.uploadAttachmentToPage('page-1', imagePath, filename);
+
+      assert.deepStrictEqual(first, uploadResponse);
+      assert.deepStrictEqual(second, uploadResponse);
+      assert.strictEqual(countUploadPosts(), 1, 'should POST the upload exactly once');
+    });
+
+    it('skips upload when an identical attachment already exists (matching hash)', async () => {
+      const existing = {
+        id: 'att-existing',
+        title: filename,
+        comment: `Uploaded via doc2confluence sha256:${imageHash}`,
+      };
+      mockFetch.mock.mockImplementation((_url: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return Promise.resolve(
+            makeResponse({ json: mock.fn(() => Promise.resolve({ id: 'should-not-happen' })) })
+          );
+        }
+        return Promise.resolve(
+          makeResponse({ json: mock.fn(() => Promise.resolve({ results: [existing] })) })
+        );
+      });
+
+      const result = await client.uploadAttachmentToPage('page-1', imagePath, filename);
+
+      assert.strictEqual((result as { id: string }).id, 'att-existing');
+      assert.strictEqual(countUploadPosts(), 0, 'should not POST when identical attachment exists');
+    });
+
+    it('uploads when an attachment with the same name has different content', async () => {
+      const existing = {
+        id: 'att-old',
+        title: filename,
+        comment: 'Uploaded via doc2confluence sha256:deadbeefdifferenthash',
+      };
+      const uploadResponse = { id: 'att-new', title: filename };
+      mockFetch.mock.mockImplementation((_url: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return Promise.resolve(
+            makeResponse({ json: mock.fn(() => Promise.resolve(uploadResponse)) })
+          );
+        }
+        return Promise.resolve(
+          makeResponse({ json: mock.fn(() => Promise.resolve({ results: [existing] })) })
+        );
+      });
+
+      const result = await client.uploadAttachmentToPage('page-1', imagePath, filename);
+
+      assert.deepStrictEqual(result, uploadResponse);
+      assert.strictEqual(countUploadPosts(), 1, 'should POST when content differs');
+    });
+
+    it('retries once on HTTP 429 then succeeds', async () => {
+      const okData = { results: [{ id: 'space-1', key: 'TEST', name: 'Test Space' }] };
+      let calls = 0;
+      mockFetch.mock.mockImplementation(() => {
+        calls++;
+        if (calls === 1) {
+          return Promise.resolve(
+            makeResponse({
+              ok: false,
+              status: 429,
+              statusText: 'Too Many Requests',
+              retryAfter: '0',
+            })
+          );
+        }
+        return Promise.resolve(makeResponse({ json: mock.fn(() => Promise.resolve(okData)) }));
+      });
+
+      const result = await client.getSpaceByKey('TEST');
+      assert.ok(result, 'should eventually succeed after a 429');
+      assert.strictEqual(calls, 2, 'should retry exactly once');
+    });
+
+    it('throws after exhausting retries on persistent 429', async () => {
+      mockFetch.mock.mockImplementation(() =>
+        Promise.resolve(
+          makeResponse({ ok: false, status: 429, statusText: 'Too Many Requests', retryAfter: '0' })
+        )
+      );
+
+      await assert.rejects(() => client.getSpaceByKey('TEST'), /429/);
+      assert.strictEqual(mockFetch.mock.calls.length, 4, 'should attempt 4 times total');
+    });
   });
 });
