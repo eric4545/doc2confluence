@@ -304,30 +304,39 @@ function convertBlockquote(token: marked.Tokens.Blockquote): string {
   return `{quote}\n${text.trim()}\n{quote}\n\n`;
 }
 
+// Map of Unicode emojis to Confluence emoticons (emoticons are more reliable
+// than raw Unicode). Variation-selector variants (e.g. '⚠️' vs '⚠') are both
+// listed. Emoji keys contain no regex metacharacters, so matching them as
+// global regexes is safe; the patterns are compiled once at module load rather
+// than rebuilt on every call.
+const EMOJI_MAP: Record<string, string> = {
+  '✅': '(/)',
+  '❌': '(x)',
+  '⚠️': '(!)',
+  '⚠': '(!)',
+  ℹ️: '(i)',
+  ℹ: '(i)',
+  '⭐': '(*)',
+  '👤': '(i)',
+  '⏱️': '(time)',
+  '⏱': '(time)',
+  '📋': '(-)',
+  '🎫': '(flag)',
+  '🔀': '(?)',
+};
+
+const EMOJI_REPLACEMENTS: Array<[RegExp, string]> = Object.entries(EMOJI_MAP).map(
+  ([emoji, emoticon]) => [new RegExp(emoji, 'g'), emoticon]
+);
+
 /**
  * Helper function to replace Unicode emojis with Confluence emoticons
  * Confluence emoticons are more reliable than Unicode emojis
  */
 function replaceEmojis(text: string): string {
-  const emojiMap: Record<string, string> = {
-    '✅': '(/)',
-    '❌': '(x)',
-    '⚠️': '(!)',
-    '⚠': '(!)',
-    ℹ️: '(i)',
-    ℹ: '(i)',
-    '⭐': '(*)',
-    '👤': '(i)',
-    '⏱️': '(time)',
-    '⏱': '(time)',
-    '📋': '(-)',
-    '🎫': '(flag)',
-    '🔀': '(?)',
-  };
-
   let result = text;
-  for (const [emoji, emoticon] of Object.entries(emojiMap)) {
-    result = result.replace(new RegExp(emoji, 'g'), emoticon);
+  for (const [pattern, emoticon] of EMOJI_REPLACEMENTS) {
+    result = result.replace(pattern, emoticon);
   }
   return result;
 }

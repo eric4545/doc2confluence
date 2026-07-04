@@ -3,7 +3,6 @@ import path from 'node:path';
 import * as adfBuilders from '@atlaskit/adf-utils/builders';
 import Ajv from 'ajv';
 import { parse as parseCsv } from 'csv-parse';
-import createDOMPurify from 'dompurify';
 import { JSDOM } from 'jsdom';
 import * as marked from 'marked';
 import * as showdown from 'showdown';
@@ -20,10 +19,6 @@ export interface ADFEntity {
 const ADF_SCHEMA_URL =
   'https://unpkg.com/@atlaskit/adf-schema@49.0.0/dist/json-schema/v1/full.json';
 const ADF_SCHEMA_PATH = path.join(process.cwd(), 'cache', 'adf-schema.json');
-
-// Initialize DOMPurify with JSDOM (required for Node.js environment)
-const window = new JSDOM('').window;
-const _purify = createDOMPurify(window);
 
 export interface ConversionOptions {
   expandMacros?: boolean;
