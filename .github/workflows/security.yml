@@ -58,3 +58,24 @@ jobs:
         # Fail the check only on newly introduced high/critical vulnerabilities.
         fail-on-severity: high
         comment-summary-in-pr: on-failure
+
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24.x
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
+
+    # Audits package-lock.json directly; no install needed.
+    - name: Run npm audit (fail on high or critical)
+      run: npm audit --audit-level=high
