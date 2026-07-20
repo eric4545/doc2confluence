@@ -90,6 +90,35 @@ describe('Markdown to Wiki Markup Conversion', () => {
     });
   });
 
+  describe('Literal Brackets', () => {
+    it('should escape literal bracketed text so it is not treated as a wiki link', () => {
+      const markdown = 'Circular view path [error] here';
+      const result = convertMarkdownToWikiMarkup(markdown);
+      // Brackets must be escaped so Confluence Server does not render a
+      // broken page link (<ac:link><ri:page ri:content-title="error"/>).
+      assert.strictEqual(result, 'Circular view path \\[error\\] here');
+    });
+
+    it('should not turn real markdown links into escaped brackets', () => {
+      const markdown = 'Check out [docs](https://example.com).';
+      const result = convertMarkdownToWikiMarkup(markdown);
+      // Genuine links still use the pipe form and are left unescaped.
+      assert.strictEqual(result, 'Check out [docs|https://example.com].');
+    });
+
+    it('should escape brackets in headings', () => {
+      const markdown = '# Fix [error] path';
+      const result = convertMarkdownToWikiMarkup(markdown);
+      assert.strictEqual(result, 'h1. Fix \\[error\\] path');
+    });
+
+    it('should escape brackets in table cells', () => {
+      const markdown = ['| Header |', '| --- |', '| [error] |'].join('\n');
+      const result = convertMarkdownToWikiMarkup(markdown);
+      assert.match(result, /\|\\\[error\\\]\|/);
+    });
+  });
+
   describe('Lists', () => {
     it('should convert unordered list', () => {
       const markdown = loadMarkdownFixture('lists/unordered.md');

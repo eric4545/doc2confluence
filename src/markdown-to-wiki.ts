@@ -122,7 +122,7 @@ function processInlineTokens(tokens: marked.Token[]): string {
   for (const token of tokens) {
     switch (token.type) {
       case 'text':
-        result += replaceEmojis((token as marked.Tokens.Text).text);
+        result += escapeWikiMarkup(replaceEmojis((token as marked.Tokens.Text).text));
         break;
       case 'strong':
         result += `*${processInlineTokens((token as marked.Tokens.Strong).tokens || [])}*`;
@@ -160,7 +160,7 @@ function processInlineTokens(tokens: marked.Token[]): string {
       default:
         // Fallback to text property if available
         if ('text' in token && typeof token.text === 'string') {
-          result += replaceEmojis(token.text);
+          result += escapeWikiMarkup(replaceEmojis(token.text));
         }
     }
   }
@@ -302,6 +302,17 @@ function convertBlockquote(token: marked.Tokens.Blockquote): string {
     }
   }
   return `{quote}\n${text.trim()}\n{quote}\n\n`;
+}
+
+/**
+ * Escapes characters that Confluence wiki markup treats specially in body text.
+ * Bare [text] is link syntax on Confluence Server, so literal square brackets in
+ * prose must be escaped (\[text\]) to avoid them being rendered as broken
+ * page-link macros. Real markdown links are emitted separately as [text|href]
+ * and never pass through here.
+ */
+function escapeWikiMarkup(text: string): string {
+  return text.replace(/[[\]]/g, '\\$&');
 }
 
 /**
