@@ -312,7 +312,9 @@ function convertBlockquote(token: marked.Tokens.Blockquote): string {
  * and never pass through here.
  */
 function escapeWikiMarkup(text: string): string {
-  return text.replace(/[[\]]/g, '\\$&');
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/[[\]]/g, '\\$&');
 }
 
 /**
