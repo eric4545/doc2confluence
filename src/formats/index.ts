@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import asciidoctor from 'asciidoctor';
 import { parse as parseCsv } from 'csv-parse';
-import { Converter } from '../converter';
 import type { ConversionOptions } from '../converter';
-import { parseMarkdownFile, validateMetadata } from '../metadata';
+import { Converter } from '../converter';
+import { convertMarkdownToWikiMarkup } from '../markdown-to-wiki';
+import { parseMarkdownFile } from '../metadata';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
@@ -12,7 +13,7 @@ export interface ADFEntity {
   [key: string]: unknown;
 }
 
-export type InputFormat = 'markdown' | 'asciidoc' | 'csv';
+export type InputFormat = 'markdown' | 'asciidoc' | 'csv' | 'confluence-markup';
 
 // Extend ConversionOptions to ensure macro options are included
 export interface ExtendedConversionOptions extends ConversionOptions {
@@ -22,6 +23,29 @@ export interface ExtendedConversionOptions extends ConversionOptions {
 
 export interface FormatConverter {
   convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity>;
+}
+
+export class ConfluenceMarkupConverter implements FormatConverter {
+  async convert(content: string, _options: ExtendedConversionOptions): Promise<ADFEntity> {
+    // Convert Markdown to Confluence Wiki Markup
+    const wikiMarkup = convertMarkdownToWikiMarkup(content);
+
+    return Promise.resolve({
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'wiki-markup',
+          content: [
+            {
+              type: 'text',
+              text: wikiMarkup,
+            },
+          ],
+        },
+      ],
+    });
+  }
 }
 
 export class AsciiDocConverter implements FormatConverter {
@@ -52,8 +76,8 @@ export class AsciiDocConverter implements FormatConverter {
 }
 
 export class CsvConverter implements FormatConverter {
-  async convert(content: string, options: ExtendedConversionOptions): Promise<ADFEntity> {
-    return new Promise((resolve, reject) => {
+  async convert(content: string, _options: ExtendedConversionOptions): Promise<ADFEntity> {
+    return new Promise((resolve, _reject) => {
       // If content is empty or whitespace only, return empty table
       if (!content || content.trim() === '') {
         resolve({
@@ -192,6 +216,8 @@ export async function getConverter(format: InputFormat): Promise<FormatConverter
       return new AsciiDocConverter();
     case 'csv':
       return new CsvConverter();
+    case 'confluence-markup':
+      return new ConfluenceMarkupConverter();
     default:
       return new MarkdownConverter();
   }

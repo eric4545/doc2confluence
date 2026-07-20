@@ -191,7 +191,7 @@ describe('Server/Data Center Integration Tests', () => {
       'server'
     );
 
-    // @ts-ignore - accessing private method for testing
+    // @ts-expect-error - accessing private method for testing
     const spy = mock.method(
       client as unknown as {
         convertADFToStorage: (adf: import('../converter').ADFEntity) => string;

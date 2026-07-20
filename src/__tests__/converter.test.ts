@@ -1,6 +1,8 @@
 import assert from 'node:assert';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { describe, it, mock } from 'node:test';
+import type { ConfluenceClient } from '../confluence';
 import { Converter } from '../converter';
 import type { ADFEntity } from '../types';
 
@@ -17,7 +19,8 @@ describe('CSV handling', () => {
     assert.strictEqual(adf.type, 'doc');
     assert.ok(adf.content !== undefined);
     if (adf.content) {
-      assert.ok(adf.content.length > 0);
+      assert.strictEqual(adf.content[0].type, 'table');
+      assert.strictEqual(adf.content[0].content?.length, 2);
     }
   });
 
@@ -341,5 +344,42 @@ describe('Task List handling', () => {
         assert.strictEqual((thirdTaskContent[0].marks as ADFEntity[])[0].type, 'em');
       }
     }
+  });
+});
+
+describe('Image upload handling', () => {
+  it('uploads markdown images to the target page when pageId is provided', async () => {
+    const uploadAttachmentToPage = mock.fn(async () => ({ id: 'att-1', title: 'chart.png' }));
+    const uploadImage = mock.fn(async () => ({ id: 'space-att-1', title: 'chart.png' }));
+
+    const adf = await converter.convertToADF('![Chart](images/chart.png)', {
+      uploadImages: true,
+      basePath: '/tmp/report',
+      spaceKey: 'PC',
+      pageId: '6755347043',
+      confluenceClient: {
+        uploadAttachmentToPage,
+        uploadImage,
+      } as unknown as ConfluenceClient,
+    });
+
+    assert.strictEqual(uploadAttachmentToPage.mock.calls.length, 1);
+    assert.strictEqual(uploadImage.mock.calls.length, 0);
+    assert.deepStrictEqual(uploadAttachmentToPage.mock.calls[0].arguments, [
+      '6755347043',
+      path.resolve('/tmp/report', 'images/chart.png'),
+      'chart.png',
+    ]);
+
+    assert.strictEqual(adf.content?.[0].type, 'mediaSingle');
+    const mediaNode = adf.content?.[0].content?.[0] as ADFEntity;
+    assert.strictEqual(mediaNode.type, 'media');
+    assert.deepStrictEqual(mediaNode.attrs, {
+      type: 'file',
+      id: 'att-1',
+      collection: 'contentId',
+      filename: 'chart.png',
+      alt: 'Chart',
+    });
   });
 });

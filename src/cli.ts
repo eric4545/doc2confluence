@@ -4,12 +4,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Command } from 'commander';
 import { getConfluenceConfig, getParentPageId, validateSpaceKey } from './config';
-import { ConfluenceClient } from './confluence';
 import type { ConfluenceInstanceType } from './confluence';
-import { Converter } from './converter';
-import { type InputFormat, convertFile } from './formats';
+import { ConfluenceClient } from './confluence';
+import { convertFile, type InputFormat } from './formats';
 import { parseMarkdownFile } from './metadata';
 import type { ADFEntity } from './types';
+import { formatValidationResults, validateWikiMarkup } from './wiki-markup-validator';
 
 interface ConvertOptions {
   dryRun?: boolean;
@@ -23,7 +23,47 @@ interface ConvertOptions {
   title?: string;
   space?: string;
   parent?: string;
+  pageId?: string;
   macroFormat?: 'markdown' | 'html';
+  validate?: boolean;
+}
+
+function createPlaceholderDocument(message = 'Uploading content...'): ADFEntity {
+  return {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: message }],
+      },
+    ],
+  };
+}
+
+function derivePageTitle(adf: ADFEntity, file: string, explicitTitle?: string): string {
+  if (explicitTitle) {
+    return explicitTitle;
+  }
+
+  if (adf?.content) {
+    const firstHeading = adf.content.find(
+      (node: ADFEntity) => node.type === 'heading' && node.content && node.content.length > 0
+    );
+
+    if (firstHeading?.content) {
+      const text = firstHeading.content
+        .filter((c: ADFEntity) => c.type === 'text')
+        .map((c: ADFEntity) => c.text)
+        .join('');
+
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  return path.basename(file, path.extname(file));
 }
 
 const program = new Command();
@@ -55,7 +95,11 @@ program
   .description('Convert a file to ADF format')
   .argument('<input-file>', 'Input file path')
   .option('-o, --output <file>', 'Output file path')
-  .option('-f, --format <format>', 'Input format (markdown, asciidoc, csv)', 'markdown')
+  .option(
+    '-f, --format <format>',
+    'Input format: markdown (default), asciidoc, csv, or confluence-markup (converts markdown to wiki markup)',
+    'markdown'
+  )
   .option('--toc', 'Generate table of contents')
   .option('--inline-cards', 'Parse inline cards')
   .option('--upload-images', 'Upload images to Confluence')
@@ -102,13 +146,19 @@ program
   .option('-s, --space <key>', 'Confluence space key')
   .option('-p, --parent <id>', 'Parent page ID')
   .option('-t, --title <title>', 'Page title')
-  .option('-f, --format <format>', 'Input format (markdown, asciidoc, csv)', 'markdown')
+  .option('--page-id <id>', 'Confluence page ID to update')
+  .option(
+    '-f, --format <format>',
+    'Input format: markdown (default), asciidoc, csv, or confluence-markup (converts markdown to wiki markup)',
+    'markdown'
+  )
   .option('--toc', 'Generate table of contents')
   .option('--inline-cards', 'Parse inline cards')
   .option('--upload-images', 'Upload images to Confluence')
   .option('--use-official-schema', 'Validate against official ADF schema')
   .option('--instance-type <type>', 'Confluence instance type (cloud or server)', 'cloud')
   .option('--macro-format <format>', 'Use macro format instead of ADF (markdown or html)')
+  .option('--validate', 'Enable wiki markup validation before upload')
   .action(async (file: string, options: ConvertOptions) => {
     try {
       // Set debug mode from global option
@@ -149,7 +199,7 @@ program
         space: undefined,
         parentId: undefined,
         title: options.title,
-        pageId: undefined,
+        pageId: options.pageId,
         labels: [],
         macroFormat: options.macroFormat,
       };
@@ -185,7 +235,7 @@ program
             metadata.space = options.space || frontMatterMetadata.space;
             metadata.parentId = options.parent || frontMatterMetadata.parentId;
             metadata.title = options.title || frontMatterMetadata.title;
-            metadata.pageId = frontMatterMetadata.pageId; // No command line option for pageId
+            metadata.pageId = options.pageId || frontMatterMetadata.pageId;
             metadata.labels = frontMatterMetadata.labels || [];
             // Command line option has priority, then front matter
             metadata.macroFormat =
@@ -199,9 +249,10 @@ program
         adf = await convertFile(file, format, {
           generateToc: options.toc,
           parseInlineCards: options.inlineCards,
-          uploadImages: options.uploadImages,
+          uploadImages: false,
           useOfficialSchema: options.useOfficialSchema,
           macroFormat: metadata.macroFormat,
+          instanceType: config.instanceType,
         });
       }
 
@@ -228,77 +279,219 @@ program
         config.instanceType
       );
 
-      // Extract title from metadata, command line option, first heading, or filename
-      let pageTitle = metadata.title;
-      if (isDebugMode && pageTitle) {
-        console.log(`DEBUG: Using title from metadata: "${pageTitle}"`);
+      const pageTitle = derivePageTitle(adf, file, metadata.title);
+      if (isDebugMode) {
+        console.log(`DEBUG: Using page title: "${pageTitle}"`);
       }
 
-      if (!pageTitle && adf && adf.content) {
-        // Look for the first heading in the ADF content
-        const firstHeading = adf.content.find(
-          (node: ADFEntity) => node.type === 'heading' && node.content && node.content.length > 0
-        );
-
-        if (firstHeading?.content) {
-          // Extract text from the heading
-          const text = firstHeading.content
-            .filter((c: ADFEntity) => c.type === 'text')
-            .map((c: ADFEntity) => c.text)
-            .join('');
-
-          if (text) {
-            pageTitle = text;
+      let targetPageId = metadata.pageId ? String(metadata.pageId) : undefined;
+      if (
+        options.uploadImages &&
+        !file.endsWith('.adf.json') &&
+        !file.endsWith('.confluence') &&
+        !file.endsWith('.wiki')
+      ) {
+        if (!targetPageId) {
+          const existingPage = await client.getPageByTitle(spaceKey, pageTitle, parentId);
+          if (existingPage?.id) {
+            targetPageId = existingPage.id;
             if (isDebugMode) {
-              console.log(`DEBUG: Using first heading as title: "${pageTitle}"`);
+              console.log(`DEBUG: Reusing existing page for image uploads: ${targetPageId}`);
             }
           }
         }
-      }
 
-      // Fall back to filename if no heading found
-      if (!pageTitle) {
-        pageTitle = path.basename(file, path.extname(file));
-        if (isDebugMode) {
-          console.log(`DEBUG: No heading found, using filename as title: "${pageTitle}"`);
+        if (!targetPageId) {
+          if (isDebugMode) {
+            console.log('DEBUG: Creating placeholder page to obtain page ID for image uploads');
+          }
+
+          const placeholderPage = await client.createPage(
+            spaceKey,
+            pageTitle,
+            createPlaceholderDocument(),
+            parentId
+          );
+          targetPageId = placeholderPage.id;
         }
+
+        const format = options.format as InputFormat;
+        adf = await convertFile(file, format, {
+          generateToc: options.toc,
+          parseInlineCards: options.inlineCards,
+          uploadImages: true,
+          useOfficialSchema: options.useOfficialSchema,
+          macroFormat: metadata.macroFormat,
+          instanceType: config.instanceType,
+          basePath: path.dirname(path.resolve(file)),
+          confluenceClient: client,
+          spaceKey,
+          pageId: targetPageId,
+        });
       }
 
       if (isDebugMode) {
         console.log(`DEBUG: Pushing to Confluence. SpaceKey: ${spaceKey}, Title: ${pageTitle}`);
       }
 
-      // Use pageId from metadata if available
-      const pageIdParam = metadata.pageId ? String(metadata.pageId) : undefined;
+      const pageIdParam = targetPageId;
 
-      const pageId = await client.createOrUpdatePage(
+      // Determine content format based on file type and content
+      let content: { format: 'adf'; data: ADFEntity } | { format: 'wiki'; data: string };
+
+      // Check if this is raw wiki markup (.confluence or .wiki files)
+      if (file.endsWith('.confluence') || file.endsWith('.wiki')) {
+        // For .confluence files, read the raw content directly
+        const wikiContent = await fs.readFile(file, 'utf-8');
+        content = { format: 'wiki', data: wikiContent };
+
+        if (isDebugMode) {
+          console.log('DEBUG: Detected raw wiki markup file, using wiki format');
+        }
+
+        // Validate wiki markup only if explicitly enabled
+        if (options.validate) {
+          const validationResult = validateWikiMarkup(wikiContent);
+          if (!validationResult.valid || validationResult.warnings.length > 0) {
+            console.log('\n⚠️  Wiki Markup Validation Issues:\n');
+            console.log(formatValidationResults(validationResult));
+
+            if (!validationResult.valid) {
+              console.log('\n❌ Validation failed. Please fix the errors above before pushing.');
+              process.exit(1);
+            }
+
+            console.log('\n⚠️  Proceeding with warnings...\n');
+          }
+        }
+      } else {
+        content = { format: 'adf', data: adf };
+      }
+
+      let pageResponse = await client.createOrUpdatePage({
         spaceKey,
-        pageTitle,
-        adf,
+        title: pageTitle,
+        content,
         parentId,
-        pageIdParam,
-        metadata.labels
-      );
+        pageId: pageIdParam,
+        labels: metadata.labels,
+      });
 
       if (isDebugMode) {
-        console.log('DEBUG: Response from createOrUpdatePage:', pageId);
+        console.log('DEBUG: Response from createOrUpdatePage:', pageResponse);
       }
 
       // Use type assertion to access properties safely
       const responseId =
-        typeof pageId === 'object' && pageId && 'id' in pageId
-          ? (pageId as { id: string }).id
-          : String(pageId);
+        typeof pageResponse === 'object' && pageResponse && 'id' in pageResponse
+          ? (pageResponse as { id: string }).id
+          : String(pageResponse);
+
+      // Process images if content is wiki markup and upload-images option is enabled
+      if (content.format === 'wiki' && options.uploadImages) {
+        const wikiContent = content.data;
+        const baseDir = path.dirname(path.resolve(file));
+
+        if (isDebugMode) {
+          console.log('DEBUG: Processing wiki markup images...');
+          console.log(`DEBUG: Base directory: ${baseDir}`);
+        }
+
+        // Check if there are any images with paths to process
+        const hasImagesToProcess = /!([^!]*[/\\][^!]*)!/g.test(wikiContent);
+
+        if (hasImagesToProcess) {
+          console.log('Processing and uploading images...');
+
+          try {
+            const processedWikiContent = await client.processWikiMarkupImages(
+              wikiContent,
+              responseId,
+              baseDir
+            );
+
+            // Update the page with processed content (images uploaded, paths corrected)
+            if (processedWikiContent !== wikiContent) {
+              if (isDebugMode) {
+                console.log('DEBUG: Updating page with processed image references');
+              }
+
+              // Get current page to get version number
+              const currentPage = await client.getPage(responseId);
+              const currentVersion = currentPage.version?.number || 1;
+
+              pageResponse = await client.updatePage(
+                responseId,
+                pageTitle,
+                {
+                  type: 'doc',
+                  version: 1,
+                  content: [
+                    {
+                      type: 'wiki-markup',
+                      content: [{ type: 'text', text: processedWikiContent }],
+                    },
+                  ],
+                },
+                currentVersion + 1
+              );
+
+              console.log('✓ Images uploaded and references updated');
+            }
+          } catch (error) {
+            console.warn('⚠️  Warning: Failed to process images:', error);
+            // Continue even if image processing fails
+          }
+        } else if (isDebugMode) {
+          console.log('DEBUG: No images with paths found in wiki markup');
+        }
+      } else if (content.format === 'adf' && options.uploadImages) {
+        // Upload locally-referenced images now that the page (and its ID) exists, then
+        // rewrite the ADF media nodes to point at the uploaded attachments.
+        const baseDir = path.dirname(path.resolve(file));
+
+        if (isDebugMode) {
+          console.log('DEBUG: Processing ADF images...');
+          console.log(`DEBUG: Base directory: ${baseDir}`);
+        }
+
+        try {
+          const { changed } = await client.processAdfImages(content.data, responseId, baseDir);
+
+          if (changed) {
+            console.log('Processing and uploading images...');
+
+            // Get current page to get version number
+            const currentPage = await client.getPage(responseId);
+            const currentVersion = currentPage.version?.number || 1;
+
+            pageResponse = await client.updatePage(
+              responseId,
+              pageTitle,
+              content.data,
+              currentVersion + 1
+            );
+
+            console.log('✓ Images uploaded and references updated');
+          } else if (isDebugMode) {
+            console.log('DEBUG: No local images found in ADF content');
+          }
+        } catch (error) {
+          console.warn('⚠️  Warning: Failed to process images:', error);
+          // Continue even if image processing fails
+        }
+      }
+
       console.log(`Successfully pushed to Confluence (Page ID: ${responseId})`);
 
       // Build the complete URL from the response
       let pageUrl = 'Not available';
-      const typedPageId = pageId as { _links?: { webui?: string; base?: string } };
+      const typedPageId = pageResponse as { _links?: { webui?: string; base?: string } };
       if (typedPageId._links?.webui && typedPageId._links?.base) {
         pageUrl = `${typedPageId._links.base}${typedPageId._links.webui}`;
       } else if (typedPageId._links?.webui) {
         // If no base URL is provided, use the configured URL
-        const config = getConfluenceConfig();
+        const config = await getConfluenceConfig();
         pageUrl = `${config.url}${typedPageId._links.webui}`;
       }
 
