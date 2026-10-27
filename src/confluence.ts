@@ -1293,6 +1293,7 @@ export class ConfluenceClient {
 
     this.log(`Found ${matches.length} image(s) in wiki markup`);
     let processedMarkup = wikiMarkup;
+    const failures: Array<{ imagePath: string; error: unknown }> = [];
 
     for (const match of matches) {
       const imagePath = match[1]; // e.g., "./evidence/staging/deployment.png"
@@ -1325,8 +1326,20 @@ export class ConfluenceClient {
         this.log(`✓ Uploaded and updated reference: ${imagePath} -> ${filename}`);
       } catch (error) {
         this.log(`✗ Failed to upload image ${imagePath}: ${error}`);
-        // Continue with other images even if one fails
+        failures.push({ imagePath, error });
       }
+    }
+
+    if (failures.length > 0) {
+      const details = failures
+        .map(
+          ({ imagePath, error }) =>
+            `  - ${imagePath}: ${error instanceof Error ? error.message : String(error)}`
+        )
+        .join('\n');
+      throw new Error(
+        `Failed to upload ${failures.length} image(s). The page WAS published, but these image references are broken (they render as "Unknown Attachment"):\n${details}\nFix or remove the failing images and re-push.`
+      );
     }
 
     return processedMarkup;
@@ -1385,6 +1398,7 @@ export class ConfluenceClient {
 
     this.log(`Found ${localMediaNodes.length} local image(s) in ADF content`);
     let changed = false;
+    const failures: Array<{ imagePath: string; error: unknown }> = [];
 
     for (const node of localMediaNodes) {
       const attrs = node.attrs as {
@@ -1417,8 +1431,21 @@ export class ConfluenceClient {
         this.log(`✓ Uploaded and updated reference: ${imagePath} -> ${filename}`);
       } catch (error) {
         this.log(`✗ Failed to upload image ${imagePath}: ${error}`);
-        // Leave the node as an external reference and continue with the rest.
+        // Record the failure; throw after the loop so all failures are reported.
+        failures.push({ imagePath, error });
       }
+    }
+
+    if (failures.length > 0) {
+      const details = failures
+        .map(
+          ({ imagePath, error }) =>
+            `  - ${imagePath}: ${error instanceof Error ? error.message : String(error)}`
+        )
+        .join('\n');
+      throw new Error(
+        `Failed to upload ${failures.length} image(s). The page WAS published, but these image references are broken (they render as "Unknown Attachment"):\n${details}\nFix or remove the failing images and re-push.`
+      );
     }
 
     return { changed };

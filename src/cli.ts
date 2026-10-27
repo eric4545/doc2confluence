@@ -11,6 +11,9 @@ import { parseMarkdownFile } from './metadata';
 import type { ADFEntity } from './types';
 import { formatValidationResults, validateWikiMarkup } from './wiki-markup-validator';
 
+/** Confluence Server default per-attachment upload cap. Files larger than this fail with HTTP 413. */
+const ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024;
+
 interface ConvertOptions {
   dryRun?: boolean;
   instanceType?: ConfluenceInstanceType;
@@ -328,6 +331,44 @@ program
           spaceKey,
           pageId: targetPageId,
         });
+      }
+
+      // Fail fast: verify local image references before any page write.
+      // An image that fails to upload after the page is published renders as a broken
+      // "Unknown Attachment" reference, and (previously) the push still exited 0.
+      if (
+        options.uploadImages &&
+        !file.endsWith('.adf.json') &&
+        !file.endsWith('.confluence') &&
+        !file.endsWith('.wiki')
+      ) {
+        const sourceText = await fs.readFile(file, 'utf-8');
+        const baseDir = path.dirname(path.resolve(file));
+        const imageRefs = Array.from(sourceText.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)).map(
+          (m) => m[1]
+        );
+        const problems: string[] = [];
+        for (const ref of imageRefs) {
+          if (/^(https?:|data:)/.test(ref)) continue;
+          const full = path.resolve(baseDir, ref);
+          try {
+            const stat = await fs.stat(full);
+            if (stat.size > ATTACHMENT_MAX_BYTES) {
+              problems.push(
+                `${ref} — ${(stat.size / (1024 * 1024)).toFixed(1)} MB exceeds the Confluence attachment cap (~${Math.round(ATTACHMENT_MAX_BYTES / (1024 * 1024))} MB on Server). Compress it before publishing.`
+              );
+            }
+          } catch {
+            problems.push(`${ref} — file not found at ${full}`);
+          }
+        }
+        if (problems.length > 0) {
+          console.error('❌ Image pre-check failed — no page was created or updated:');
+          for (const problem of problems) {
+            console.error(`   - ${problem}`);
+          }
+          process.exit(1);
+        }
       }
 
       if (isDebugMode) {
