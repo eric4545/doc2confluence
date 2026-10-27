@@ -1,5 +1,6 @@
 import path from 'node:path';
 import * as dotenv from 'dotenv';
+import { assertSecureUrl } from './security';
 
 // Load environment variables from .env file
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
@@ -65,6 +66,9 @@ export function getConfluenceConfig(): ConfluenceConfig {
   // Ensure URL has correct format for API calls
   // Remove trailing slashes first to prevent double slashes
   config.url = config.url.replace(/\/+$/, '');
+
+  // Basic auth / PAT headers go out with every request; never send them in cleartext.
+  assertSecureUrl(config.url);
 
   // Special handling for URL formats
   if (config.instanceType === 'server') {

@@ -4,6 +4,15 @@ import path from 'node:path';
 // Import FormData dynamically to make testing easier
 // This will be mocked in tests
 import type { default as FormDataType } from 'form-data';
+import {
+  cdata,
+  escapeXml,
+  hasImageExtension,
+  IMAGE_EXTENSIONS,
+  resolveLocalAsset,
+  safeColor,
+  safeHref,
+} from './security';
 
 // Get FormData implementation - will be replaced by mocks in tests
 const FormData: typeof FormDataType = require('form-data');
@@ -93,6 +102,73 @@ interface ExtensionAttrs {
   extensionType?: string;
   extensionKey?: string;
   parameters?: Record<string, unknown>;
+}
+
+/**
+ * Thrown after a page was written when one or more local images could not be uploaded.
+ * The page exists but those references render as "Unknown Attachment".
+ */
+export class ImageUploadError extends Error {
+  constructor(public readonly failures: Array<{ imagePath: string; error: unknown }>) {
+    const details = failures
+      .map(
+        ({ imagePath, error }) =>
+          `  - ${imagePath}: ${error instanceof Error ? error.message : String(error)}`
+      )
+      .join('\n');
+    super(
+      `Failed to upload ${failures.length} image(s). The page WAS published, but these image references are broken (they render as "Unknown Attachment"):\n${details}\nFix or remove the failing images and re-push.`
+    );
+    this.name = 'ImageUploadError';
+  }
+}
+
+// Confluence wiki image syntax: !path/to/image.png! or !path/to/image.png|width=300!
+// The closing "!" is a lookahead so it is not consumed and cannot swallow the next image's opener.
+const WIKI_IMAGE_PATTERN = /!([^!\s|][^!\n|]*)(\|[^!\n]*)?(?=!)/g;
+
+const URL_SCHEME_PATTERN = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/|data:)/;
+
+/**
+ * Local image paths referenced in wiki markup that need uploading (unique, in order).
+ * Bare filenames are treated as existing attachments, and URLs are left alone.
+ */
+export function findLocalWikiImageRefs(wikiMarkup: string): string[] {
+  const refs = new Set<string>();
+  for (const match of wikiMarkup.matchAll(WIKI_IMAGE_PATTERN)) {
+    const imagePath = match[1];
+    if (!imagePath.includes('/') && !imagePath.includes('\\')) continue;
+    if (URL_SCHEME_PATTERN.test(imagePath)) continue;
+    if (!hasImageExtension(imagePath)) continue;
+    refs.add(imagePath);
+  }
+  return Array.from(refs);
+}
+
+/** `media` nodes in an ADF document that point at a local file rather than a URL. */
+export function findLocalAdfMediaNodes(adf: ADFEntity): ADFEntity[] {
+  const nodes: ADFEntity[] = [];
+  const collect = (node: ADFEntity): void => {
+    if (node.type === 'media') {
+      const attrs = node.attrs as { type?: string; url?: string } | undefined;
+      const url = attrs?.url;
+      if (
+        attrs?.type === 'external' &&
+        typeof url === 'string' &&
+        url.length > 0 &&
+        !URL_SCHEME_PATTERN.test(url)
+      ) {
+        nodes.push(node);
+      }
+    }
+    if (Array.isArray(node.content)) {
+      for (const child of node.content) {
+        collect(child);
+      }
+    }
+  };
+  collect(adf);
+  return nodes;
 }
 
 export class ConfluenceClient {
@@ -458,7 +534,7 @@ export class ConfluenceClient {
     content: ADFEntity,
     version: number
   ): Promise<ConfluenceResponse> {
-    const endpoint = this.buildApiEndpoint(`/content/${pageId}`);
+    const endpoint = this.buildApiEndpoint(`/content/${encodeURIComponent(pageId)}`);
     const currentPage = await this.getPage(pageId); // getPage is now refactored
     const body: Record<string, unknown> = {
       id: pageId,
@@ -498,7 +574,7 @@ export class ConfluenceClient {
     content: ADFEntity,
     version: number
   ): Promise<ConfluenceResponse> {
-    const endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
+    const endpoint = this.buildApiEndpoint(`/api/v2/pages/${encodeURIComponent(pageId)}`);
 
     // For Markdown macro, always use storage format
     let bodyValue: string;
@@ -555,13 +631,15 @@ export class ConfluenceClient {
   }
 
   private async _getPageServer(pageId: string): Promise<ConfluenceResponse> {
-    const endpoint = this.buildApiEndpoint(`/content/${pageId}?expand=space,version,body.storage`);
+    const endpoint = this.buildApiEndpoint(
+      `/content/${encodeURIComponent(pageId)}?expand=space,version,body.storage`
+    );
     this.log(`Getting server page from: ${endpoint}`);
     return this._fetchJson(endpoint) as Promise<ConfluenceResponse>;
   }
 
   private async _getPageCloud(pageId: string): Promise<ConfluenceResponse> {
-    const endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}`);
+    const endpoint = this.buildApiEndpoint(`/api/v2/pages/${encodeURIComponent(pageId)}`);
     this.log(`Getting cloud page from: ${endpoint}`);
     return this._fetchJson(endpoint) as Promise<ConfluenceResponse>;
   }
@@ -839,7 +917,7 @@ export class ConfluenceClient {
   }
 
   private async _addLabelsToServerPage(pageId: string, labels: string[]): Promise<unknown> {
-    const endpoint = this.buildApiEndpoint(`/content/${pageId}/label`);
+    const endpoint = this.buildApiEndpoint(`/content/${encodeURIComponent(pageId)}/label`);
     const body = labels.map((label) => ({ prefix: 'global', name: label }));
     this.log(`Adding labels to server page at: ${endpoint}`);
     return this._fetchJson(endpoint, {
@@ -887,7 +965,9 @@ export class ConfluenceClient {
     this.log(`Found content ID ${contentId} for page ${pageId} (v1 API)`);
 
     // Now use v1 API to add labels
-    const endpoint = this.buildApiEndpoint(`/rest/api/content/${contentId}/label`);
+    const endpoint = this.buildApiEndpoint(
+      `/rest/api/content/${encodeURIComponent(contentId)}/label`
+    );
     const body = labels.map((label) => ({ prefix: 'global', name: label }));
     this.log(`Adding labels to cloud page (v1 API) at: ${endpoint}`);
     return this._fetchJson(endpoint, {
@@ -914,7 +994,7 @@ export class ConfluenceClient {
   }
 
   private async _getSpaceByIdCloud(spaceId: string): Promise<ConfluenceSpace | null> {
-    const endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceId}`);
+    const endpoint = this.buildApiEndpoint(`/api/v2/spaces/${encodeURIComponent(spaceId)}`);
     this.log(`Fetching cloud space information for ID ${spaceId} at: ${endpoint}`);
     return this._fetchJson(endpoint) as Promise<ConfluenceSpace>;
   }
@@ -968,14 +1048,14 @@ export class ConfluenceClient {
     const effectiveInstanceType = this.getEffectiveInstanceType();
     let endpoint: string;
     if (effectiveInstanceType === 'server') {
-      endpoint = this.buildApiEndpoint(`/content/${pageId}/child/attachment`);
+      endpoint = this.buildApiEndpoint(`/content/${encodeURIComponent(pageId)}/child/attachment`);
       const params = new URLSearchParams({ expand: 'version,metadata,extensions' });
       if (filename) {
         params.set('filename', filename);
       }
       endpoint = `${endpoint}?${params}`;
     } else {
-      endpoint = this.buildApiEndpoint(`/api/v2/pages/${pageId}/attachments`);
+      endpoint = this.buildApiEndpoint(`/api/v2/pages/${encodeURIComponent(pageId)}/attachments`);
       const params = new URLSearchParams({ limit: '250' });
       if (filename) {
         params.set('filename', filename);
@@ -1064,7 +1144,9 @@ export class ConfluenceClient {
     filePath: string,
     comment?: string
   ): Promise<ImageUploadResponse> {
-    const endpoint = this.buildApiEndpoint(`/api/v2/spaces/${spaceKey}/attachments`);
+    const endpoint = this.buildApiEndpoint(
+      `/api/v2/spaces/${encodeURIComponent(spaceKey)}/attachments`
+    );
 
     const { body, headers } = this.buildMultipartBody(filePath, path.basename(filePath), [
       ['comment', comment || 'Uploaded via md2confluence'],
@@ -1140,7 +1222,7 @@ export class ConfluenceClient {
       (commentWithHash) => {
         if (effectiveInstanceType === 'server') {
           return this._uploadAttachment(
-            `/content/${pageId}/child/attachment`,
+            `/content/${encodeURIComponent(pageId)}/child/attachment`,
             filePath,
             actualFilename,
             commentWithHash,
@@ -1148,7 +1230,7 @@ export class ConfluenceClient {
           );
         }
         return this._uploadAttachment(
-          `/api/v2/pages/${pageId}/attachments`,
+          `/api/v2/pages/${encodeURIComponent(pageId)}/attachments`,
           filePath,
           actualFilename,
           commentWithHash,
@@ -1282,46 +1364,30 @@ export class ConfluenceClient {
     pageId: string,
     baseDir: string
   ): Promise<string> {
-    // Pattern to match Confluence image syntax: !path/to/image.png!
-    const imagePattern = /!([^!]+)!/g;
-    const matches = Array.from(wikiMarkup.matchAll(imagePattern));
+    const imagePaths = findLocalWikiImageRefs(wikiMarkup);
 
-    if (matches.length === 0) {
-      this.log('No images found in wiki markup');
+    if (imagePaths.length === 0) {
+      this.log('No local images found in wiki markup');
       return wikiMarkup;
     }
 
-    this.log(`Found ${matches.length} image(s) in wiki markup`);
-    let processedMarkup = wikiMarkup;
+    this.log(`Found ${imagePaths.length} local image(s) in wiki markup`);
+    const uploaded = new Map<string, string>();
     const failures: Array<{ imagePath: string; error: unknown }> = [];
 
-    for (const match of matches) {
-      const imagePath = match[1]; // e.g., "./evidence/staging/deployment.png"
-
-      // Skip if it's already just a filename (no path separators)
-      if (!imagePath.includes('/') && !imagePath.includes('\\')) {
-        this.log(`Skipping image (already a filename): ${imagePath}`);
-        continue;
-      }
-
-      // Skip URLs
-      if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
-        this.log(`Skipping external image: ${imagePath}`);
-        continue;
-      }
-
+    for (const imagePath of imagePaths) {
       try {
-        // Resolve the full path
-        const fullPath = path.resolve(baseDir, imagePath);
+        const fullPath = resolveLocalAsset(imagePath, baseDir, {
+          extensions: IMAGE_EXTENSIONS,
+          kind: 'image',
+        });
         const filename = path.basename(imagePath);
 
         this.log(`Uploading image: ${fullPath} as ${filename}`);
 
         // Upload the image as an attachment to the page
         await this.uploadAttachmentToPage(pageId, fullPath, filename);
-
-        // Replace the path with just the filename
-        processedMarkup = processedMarkup.replace(`!${imagePath}!`, `!${filename}!`);
+        uploaded.set(imagePath, filename);
 
         this.log(`✓ Uploaded and updated reference: ${imagePath} -> ${filename}`);
       } catch (error) {
@@ -1331,18 +1397,14 @@ export class ConfluenceClient {
     }
 
     if (failures.length > 0) {
-      const details = failures
-        .map(
-          ({ imagePath, error }) =>
-            `  - ${imagePath}: ${error instanceof Error ? error.message : String(error)}`
-        )
-        .join('\n');
-      throw new Error(
-        `Failed to upload ${failures.length} image(s). The page WAS published, but these image references are broken (they render as "Unknown Attachment"):\n${details}\nFix or remove the failing images and re-push.`
-      );
+      throw new ImageUploadError(failures);
     }
 
-    return processedMarkup;
+    // Replace each uploaded path with just the filename, keeping any |params.
+    return wikiMarkup.replace(WIKI_IMAGE_PATTERN, (match, imagePath: string, params = '') => {
+      const filename = uploaded.get(imagePath);
+      return filename ? `!${filename}${params}` : match;
+    });
   }
 
   /**
@@ -1366,30 +1428,7 @@ export class ConfluenceClient {
     pageId: string,
     baseDir: string
   ): Promise<{ changed: boolean }> {
-    // Collect all media nodes referencing a local file.
-    const localMediaNodes: ADFEntity[] = [];
-    const collect = (node: ADFEntity): void => {
-      if (node.type === 'media') {
-        const attrs = node.attrs as { type?: string; url?: string } | undefined;
-        const url = attrs?.url;
-        if (
-          attrs?.type === 'external' &&
-          typeof url === 'string' &&
-          url.length > 0 &&
-          !url.startsWith('http://') &&
-          !url.startsWith('https://') &&
-          !url.startsWith('data:')
-        ) {
-          localMediaNodes.push(node);
-        }
-      }
-      if (Array.isArray(node.content)) {
-        for (const child of node.content) {
-          collect(child);
-        }
-      }
-    };
-    collect(adf);
+    const localMediaNodes = findLocalAdfMediaNodes(adf);
 
     if (localMediaNodes.length === 0) {
       this.log('No local images found in ADF content');
@@ -1412,7 +1451,10 @@ export class ConfluenceClient {
       const imagePath = attrs.url as string;
 
       try {
-        const fullPath = path.resolve(baseDir, imagePath);
+        const fullPath = resolveLocalAsset(imagePath, baseDir, {
+          extensions: IMAGE_EXTENSIONS,
+          kind: 'image',
+        });
         const filename = path.basename(imagePath);
 
         this.log(`Uploading image: ${fullPath} as ${filename}`);
@@ -1437,15 +1479,7 @@ export class ConfluenceClient {
     }
 
     if (failures.length > 0) {
-      const details = failures
-        .map(
-          ({ imagePath, error }) =>
-            `  - ${imagePath}: ${error instanceof Error ? error.message : String(error)}`
-        )
-        .join('\n');
-      throw new Error(
-        `Failed to upload ${failures.length} image(s). The page WAS published, but these image references are broken (they render as "Unknown Attachment"):\n${details}\nFix or remove the failing images and re-push.`
-      );
+      throw new ImageUploadError(failures);
     }
 
     return { changed };
@@ -1543,7 +1577,7 @@ export class ConfluenceClient {
    */
   private createMarkdownMacroStorage(markdownContent: string): string {
     // This is the simplest format that works with Confluence storage format
-    return `<ac:structured-macro ac:name="markdown"><ac:plain-text-body><![CDATA[${markdownContent}]]></ac:plain-text-body></ac:structured-macro>`;
+    return `<ac:structured-macro ac:name="markdown"><ac:plain-text-body>${cdata(markdownContent)}</ac:plain-text-body></ac:structured-macro>`;
   }
 
   /**
@@ -1556,7 +1590,7 @@ export class ConfluenceClient {
       switch (node.type) {
         case 'wiki-markup': {
           const wikiContent = this.getRawTextContentFromADFNodes(node.content || []);
-          result += `<![CDATA[${wikiContent}]]>`;
+          result += cdata(wikiContent);
           break;
         }
         case 'paragraph':
@@ -1581,7 +1615,7 @@ export class ConfluenceClient {
                 text = `<code>${text}</code>`;
                 break;
               case 'link':
-                text = `<a href="${(mark as { attrs?: { href?: string } }).attrs?.href || '#'}">${text}</a>`;
+                text = `<a href="${escapeXml(safeHref((mark as { attrs?: { href?: string } }).attrs?.href))}">${text}</a>`;
                 break;
               case 'strike':
                 text = `<s>${text}</s>`;
@@ -1589,11 +1623,13 @@ export class ConfluenceClient {
               case 'underline':
                 text = `<u>${text}</u>`;
                 break;
-              case 'textColor':
-                if ((mark as { attrs?: { color?: string } }).attrs?.color) {
-                  text = `<span style="color:${(mark as { attrs: { color: string } }).attrs.color}">${text}</span>`;
+              case 'textColor': {
+                const color = safeColor((mark as { attrs?: { color?: string } }).attrs?.color);
+                if (color) {
+                  text = `<span style="color:${color}">${text}</span>`;
                 }
                 break;
+              }
               case 'subsup': {
                 const tag =
                   (mark as { attrs?: { type?: string } }).attrs?.type === 'sub' ? 'sub' : 'sup';
@@ -1606,7 +1642,8 @@ export class ConfluenceClient {
           break;
         }
         case 'heading': {
-          const level = (node.attrs as { level?: number })?.level || 1;
+          const rawLevel = Number((node.attrs as { level?: number })?.level);
+          const level = Number.isInteger(rawLevel) ? Math.min(Math.max(rawLevel, 1), 6) : 1;
           result += `<h${level}>${this.processADFNodes(node.content || [])}</h${level}>`;
           break;
         }
@@ -1628,13 +1665,13 @@ export class ConfluenceClient {
             // Wrap Mermaid code in a Markdown macro with Markdown code fences
             result += '<ac:structured-macro ac:name="markdown">';
             // Ensure newlines are correctly placed around the mermaid content
-            result += `<ac:plain-text-body><![CDATA[\`\`\`mermaid\n${codeContent}\n\`\`\`]]></ac:plain-text-body></ac:structured-macro>`;
+            result += `<ac:plain-text-body>${cdata(`\`\`\`mermaid\n${codeContent}\n\`\`\``)}</ac:plain-text-body></ac:structured-macro>`;
           } else {
             result += '<ac:structured-macro ac:name="code">';
             if (language) {
-              result += `<ac:parameter ac:name="language">${language}</ac:parameter>`;
+              result += `<ac:parameter ac:name="language">${escapeXml(language)}</ac:parameter>`;
             }
-            result += `<ac:plain-text-body><![CDATA[${codeContent}]]></ac:plain-text-body></ac:structured-macro>`;
+            result += `<ac:plain-text-body>${cdata(codeContent)}</ac:plain-text-body></ac:structured-macro>`;
           }
           break;
         }
@@ -1645,7 +1682,7 @@ export class ConfluenceClient {
           const panelType = (node.attrs as { panelType?: string })?.panelType || 'info';
           result += `<ac:structured-macro ac:name="info">`;
           if (panelType !== 'info') {
-            result += `<ac:parameter ac:name="type">${panelType}</ac:parameter>`;
+            result += `<ac:parameter ac:name="type">${escapeXml(panelType)}</ac:parameter>`;
           }
           result += `<ac:rich-text-body>${this.processADFNodes(node.content || [])}</ac:rich-text-body></ac:structured-macro>`;
           break;
@@ -1659,9 +1696,9 @@ export class ConfluenceClient {
             | undefined;
           if (attrs?.type === 'file') {
             // For Server/Data Center, we need to use the attachment macro
-            result += `<ac:image><ri:attachment ri:filename="${attrs.filename || ''}" /></ac:image>`;
+            result += `<ac:image><ri:attachment ri:filename="${escapeXml(attrs.filename)}" /></ac:image>`;
           } else if (attrs?.type === 'external') {
-            result += `<ac:image><ri:url ri:value="${attrs.url}" /></ac:image>`;
+            result += `<ac:image><ri:url ri:value="${escapeXml(safeHref(attrs.url))}" /></ac:image>`;
           }
           break;
         }
@@ -1672,24 +1709,14 @@ export class ConfluenceClient {
           result += `<tr>${this.processADFNodes(node.content || [])}</tr>`;
           break;
         case 'tableCell': {
-          const colspan = (node.attrs as { colspan?: number })?.colspan
-            ? ` colspan="${(node.attrs as { colspan?: number })?.colspan}"`
-            : '';
-          const rowspan = (node.attrs as { rowspan?: number })?.rowspan
-            ? ` rowspan="${(node.attrs as { rowspan?: number })?.rowspan}"`
-            : '';
+          const colspan = this.spanAttr('colspan', node.attrs);
+          const rowspan = this.spanAttr('rowspan', node.attrs);
           result += `<td${colspan}${rowspan}>${this.processADFNodes(node.content || [])}</td>`;
           break;
         }
         case 'tableHeader': {
-          const thColspan =
-            node.attrs && (node.attrs as { colspan?: number }).colspan
-              ? ` colspan="${(node.attrs as { colspan?: number }).colspan}"`
-              : '';
-          const thRowspan =
-            node.attrs && (node.attrs as { rowspan?: number }).rowspan
-              ? ` rowspan="${(node.attrs as { rowspan?: number }).rowspan}"`
-              : '';
+          const thColspan = this.spanAttr('colspan', node.attrs);
+          const thRowspan = this.spanAttr('rowspan', node.attrs);
           result += `<th${thColspan}${thRowspan}>${this.processADFNodes(node.content || [])}</th>`;
           break;
         }
@@ -1720,15 +1747,15 @@ export class ConfluenceClient {
               result += '<ac:structured-macro ac:name="markdown">';
               if (node.content) {
                 const markdownContent = this.getRawTextContentFromADFNodes(node.content);
-                result += `<ac:plain-text-body><![CDATA[${markdownContent}]]></ac:plain-text-body>`;
+                result += `<ac:plain-text-body>${cdata(markdownContent)}</ac:plain-text-body>`;
               }
               result += '</ac:structured-macro>';
             } else {
               // Other macros
-              result += `<ac:structured-macro ac:name="${extAttrs.extensionKey || 'info'}">`;
+              result += `<ac:structured-macro ac:name="${escapeXml(extAttrs.extensionKey || 'info')}">`;
               if (extAttrs.parameters) {
                 for (const [key, value] of Object.entries(extAttrs.parameters)) {
-                  result += `<ac:parameter ac:name="${key}">${value}</ac:parameter>`;
+                  result += `<ac:parameter ac:name="${escapeXml(key)}">${escapeXml(value)}</ac:parameter>`;
                 }
               }
               if (node.content) {
@@ -1752,12 +1779,13 @@ export class ConfluenceClient {
 
   // Helper method to escape HTML in text nodes
   private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
+    return escapeXml(text);
+  }
+
+  /** Render a table colspan/rowspan attribute, accepting positive integers only. */
+  private spanAttr(name: 'colspan' | 'rowspan', attrs: unknown): string {
+    const value = Number((attrs as Record<string, unknown> | undefined)?.[name]);
+    return Number.isInteger(value) && value > 0 ? ` ${name}="${value}"` : '';
   }
 
   /**
