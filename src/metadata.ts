@@ -14,8 +14,21 @@ export interface ParsedMarkdown {
   metadata: ConfluenceMetadata;
 }
 
+// gray-matter's built-in JavaScript engine eval()s `---js` front matter, which would let
+// any document run arbitrary code on the machine converting it. Only YAML/JSON are allowed.
+const rejectJsFrontMatter = {
+  parse: (): never => {
+    throw new Error('JavaScript front matter (---js) is not supported; use YAML or JSON.');
+  },
+  stringify: (): never => {
+    throw new Error('JavaScript front matter (---js) is not supported; use YAML or JSON.');
+  },
+};
+
 export function parseMarkdownFile(content: string): ParsedMarkdown {
-  const { data, content: markdownContent } = matter(content);
+  const { data, content: markdownContent } = matter(content, {
+    engines: { js: rejectJsFrontMatter, javascript: rejectJsFrontMatter },
+  });
 
   // Support both new macroFormat and legacy useMarkdownMacro for backward compatibility
   let macroFormat: 'markdown' | 'html' | undefined;

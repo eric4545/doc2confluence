@@ -6,7 +6,7 @@ A powerful command-line tool that converts documentation files (Markdown, AsciiD
 
 ## Requirements
 
-- Node.js 18 or higher
+- Node.js 22 or higher
 
 ## Installation
 
@@ -233,7 +233,7 @@ The GitHub Container Registry (ghcr.io) automatically scans all images, and our 
 
 ### Docker Image Details
 
-- **Base Image**: node:18-alpine (Alpine-based for smaller size)
+- **Base Image**: node:22-alpine (Alpine-based for smaller size)
 - **Exposed Services**: None (CLI tool only)
 - **Runtime User**: Non-root user (docuser)
 - **Image Size**: Optimized through multi-stage builds and dependency management
@@ -252,6 +252,21 @@ The following environment variables can be set in your `.env` file:
 | `CONFLUENCE_SPACE`         | Default space key                  | None                             |
 | `CONFLUENCE_PARENT_ID`     | Default parent page ID             | None                             |
 | `CONFLUENCE_INSTANCE_TYPE` | Instance type: 'cloud' or 'server' | 'cloud'                          |
+| `CONFLUENCE_ALLOW_INSECURE_HTTP` | Set to `true` to allow a plain `http://` URL (credentials are sent in cleartext) | Off; only `https://` or loopback `http://` |
+| `CONFLUENCE_ATTACHMENT_MAX_MB` | Per-image size cap checked before `--upload-images` writes anything; `0` disables | 2 on Server, none on Cloud |
+
+### Security Notes
+
+Documents are often written by someone other than the person (or CI job) publishing them, so `doc2conf` treats document content as untrusted:
+
+| Behavior | Why |
+| -------- | --- |
+| `---js` front matter is rejected; only YAML/JSON is parsed | gray-matter would otherwise `eval()` it |
+| Local images and `![csv](...)` imports must resolve (after following symlinks) inside the document's directory or the current working directory | Stops `![x](../../.env)` or `/proc/self/environ` from being published |
+| Uploaded images must have an image extension (`.png`, `.jpg`, `.svg`, …); CSV imports must end in `.csv` | Stops non-image files from being attached |
+| `pageId` / `parentId` must be numeric | They are placed in REST URL paths |
+| HTML macro output is sanitized with DOMPurify; Server storage output escapes attributes, CDATA and link schemes | Prevents stored XSS / markup injection on the page |
+| `push --upload-images` exits non-zero if any image fails to upload | Broken "Unknown Attachment" pages are never reported as success |
 
 ### Best Practices
 

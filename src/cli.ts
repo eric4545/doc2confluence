@@ -5,11 +5,79 @@ import path from 'node:path';
 import { Command } from 'commander';
 import { getConfluenceConfig, getParentPageId, validateSpaceKey } from './config';
 import type { ConfluenceInstanceType } from './confluence';
-import { ConfluenceClient } from './confluence';
+import {
+  ConfluenceClient,
+  findLocalAdfMediaNodes,
+  findLocalWikiImageRefs,
+  ImageUploadError,
+} from './confluence';
 import { convertFile, type InputFormat } from './formats';
 import { parseMarkdownFile } from './metadata';
+import { assertContentId, IMAGE_EXTENSIONS, resolveLocalAsset } from './security';
 import type { ADFEntity } from './types';
 import { formatValidationResults, validateWikiMarkup } from './wiki-markup-validator';
+
+/** Confluence Server default per-attachment upload cap. Files larger than this fail with HTTP 413. */
+const SERVER_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Per-attachment size cap for the image pre-check. CONFLUENCE_ATTACHMENT_MAX_MB overrides it
+ * (0 disables the check); otherwise Server uses its ~2 MB default and Cloud is not capped.
+ */
+function getAttachmentMaxBytes(instanceType: ConfluenceInstanceType): number | null {
+  const override = process.env.CONFLUENCE_ATTACHMENT_MAX_MB;
+  if (override !== undefined && override !== '') {
+    const mb = Number(override);
+    if (!Number.isFinite(mb) || mb < 0) {
+      throw new Error(
+        `Invalid CONFLUENCE_ATTACHMENT_MAX_MB "${override}": expected a number of MB`
+      );
+    }
+    return mb === 0 ? null : mb * 1024 * 1024;
+  }
+  return instanceType === 'server' ? SERVER_ATTACHMENT_MAX_BYTES : null;
+}
+
+/** The wiki markup text of an ADF doc produced by the confluence-markup format, if it is one. */
+function getWikiMarkupText(adf: ADFEntity): string | null {
+  if (adf?.type !== 'doc' || adf.content?.length !== 1 || adf.content[0].type !== 'wiki-markup') {
+    return null;
+  }
+  const text = adf.content[0].content?.[0]?.text;
+  return typeof text === 'string' ? text : null;
+}
+
+/**
+ * Check every local image the push would upload: it must stay inside the document/working
+ * directory, exist, and fit under the attachment cap. Returns human-readable problems.
+ */
+async function precheckLocalImages(
+  imageRefs: string[],
+  baseDir: string,
+  maxBytes: number | null
+): Promise<string[]> {
+  const problems: string[] = [];
+  for (const ref of imageRefs) {
+    let full: string;
+    try {
+      full = resolveLocalAsset(ref, baseDir, { extensions: IMAGE_EXTENSIONS, kind: 'image' });
+    } catch (error) {
+      problems.push(`${ref} — ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    try {
+      const stat = await fs.stat(full);
+      if (maxBytes !== null && stat.size > maxBytes) {
+        problems.push(
+          `${ref} — ${(stat.size / (1024 * 1024)).toFixed(1)} MB exceeds the Confluence attachment cap (${(maxBytes / (1024 * 1024)).toFixed(1)} MB; set CONFLUENCE_ATTACHMENT_MAX_MB to change). Compress it before publishing.`
+        );
+      }
+    } catch {
+      problems.push(`${ref} — file not found at ${full}`);
+    }
+  }
+  return problems;
+}
 
 interface ConvertOptions {
   dryRun?: boolean;
@@ -258,9 +326,43 @@ program
 
       // Validate space key and parent ID, potentially using metadata values
       const spaceKey = validateSpaceKey(options.space || metadata.space || config.defaultSpace);
-      const parentId = await getParentPageId(
-        options.parent || metadata.parentId || config.defaultParentId
+      // IDs can come from the document's front matter and end up in REST URL paths.
+      const parentId = assertContentId(
+        await getParentPageId(options.parent || metadata.parentId || config.defaultParentId),
+        'parent page ID'
       );
+      metadata.pageId = assertContentId(metadata.pageId, 'page ID');
+
+      const isRawWikiFile = file.endsWith('.confluence') || file.endsWith('.wiki');
+
+      // Fail fast: verify local image references before any page write (including the
+      // placeholder page below). An image that fails to upload after the page is published
+      // renders as a broken "Unknown Attachment" reference.
+      if (options.uploadImages) {
+        const wikiSource = isRawWikiFile
+          ? await fs.readFile(file, 'utf-8')
+          : getWikiMarkupText(adf);
+        const imageRefs =
+          wikiSource !== null
+            ? findLocalWikiImageRefs(wikiSource)
+            : Array.from(
+                new Set(
+                  findLocalAdfMediaNodes(adf).map((node) => (node.attrs as { url: string }).url)
+                )
+              );
+        const problems = await precheckLocalImages(
+          imageRefs,
+          path.dirname(path.resolve(file)),
+          getAttachmentMaxBytes(config.instanceType)
+        );
+        if (problems.length > 0) {
+          console.error('❌ Image pre-check failed — no page was created or updated:');
+          for (const problem of problems) {
+            console.error(`   - ${problem}`);
+          }
+          process.exit(1);
+        }
+      }
 
       if (isDebugMode) {
         console.log('DEBUG: Creating Confluence client');
@@ -285,12 +387,7 @@ program
       }
 
       let targetPageId = metadata.pageId ? String(metadata.pageId) : undefined;
-      if (
-        options.uploadImages &&
-        !file.endsWith('.adf.json') &&
-        !file.endsWith('.confluence') &&
-        !file.endsWith('.wiki')
-      ) {
+      if (options.uploadImages && !file.endsWith('.adf.json') && !isRawWikiFile) {
         if (!targetPageId) {
           const existingPage = await client.getPageByTitle(spaceKey, pageTitle, parentId);
           if (existingPage?.id) {
@@ -340,7 +437,7 @@ program
       let content: { format: 'adf'; data: ADFEntity } | { format: 'wiki'; data: string };
 
       // Check if this is raw wiki markup (.confluence or .wiki files)
-      if (file.endsWith('.confluence') || file.endsWith('.wiki')) {
+      if (isRawWikiFile) {
         // For .confluence files, read the raw content directly
         const wikiContent = await fs.readFile(file, 'utf-8');
         content = { format: 'wiki', data: wikiContent };
@@ -387,9 +484,12 @@ program
           ? (pageResponse as { id: string }).id
           : String(pageResponse);
 
-      // Process images if content is wiki markup and upload-images option is enabled
-      if (content.format === 'wiki' && options.uploadImages) {
-        const wikiContent = content.data;
+      // Process images if content is wiki markup (a raw .wiki/.confluence file, or markdown
+      // converted with --format confluence-markup) and upload-images option is enabled.
+      // Upload failures propagate: the page exists but its images are broken, so exit non-zero.
+      const wikiContent =
+        content.format === 'wiki' ? content.data : getWikiMarkupText(content.data);
+      if (wikiContent !== null && options.uploadImages) {
         const baseDir = path.dirname(path.resolve(file));
 
         if (isDebugMode) {
@@ -397,50 +497,42 @@ program
           console.log(`DEBUG: Base directory: ${baseDir}`);
         }
 
-        // Check if there are any images with paths to process
-        const hasImagesToProcess = /!([^!]*[/\\][^!]*)!/g.test(wikiContent);
-
-        if (hasImagesToProcess) {
+        if (findLocalWikiImageRefs(wikiContent).length > 0) {
           console.log('Processing and uploading images...');
 
-          try {
-            const processedWikiContent = await client.processWikiMarkupImages(
-              wikiContent,
+          const processedWikiContent = await client.processWikiMarkupImages(
+            wikiContent,
+            responseId,
+            baseDir
+          );
+
+          // Update the page with processed content (images uploaded, paths corrected)
+          if (processedWikiContent !== wikiContent) {
+            if (isDebugMode) {
+              console.log('DEBUG: Updating page with processed image references');
+            }
+
+            // Get current page to get version number
+            const currentPage = await client.getPage(responseId);
+            const currentVersion = currentPage.version?.number || 1;
+
+            pageResponse = await client.updatePage(
               responseId,
-              baseDir
+              pageTitle,
+              {
+                type: 'doc',
+                version: 1,
+                content: [
+                  {
+                    type: 'wiki-markup',
+                    content: [{ type: 'text', text: processedWikiContent }],
+                  },
+                ],
+              },
+              currentVersion + 1
             );
 
-            // Update the page with processed content (images uploaded, paths corrected)
-            if (processedWikiContent !== wikiContent) {
-              if (isDebugMode) {
-                console.log('DEBUG: Updating page with processed image references');
-              }
-
-              // Get current page to get version number
-              const currentPage = await client.getPage(responseId);
-              const currentVersion = currentPage.version?.number || 1;
-
-              pageResponse = await client.updatePage(
-                responseId,
-                pageTitle,
-                {
-                  type: 'doc',
-                  version: 1,
-                  content: [
-                    {
-                      type: 'wiki-markup',
-                      content: [{ type: 'text', text: processedWikiContent }],
-                    },
-                  ],
-                },
-                currentVersion + 1
-              );
-
-              console.log('✓ Images uploaded and references updated');
-            }
-          } catch (error) {
-            console.warn('⚠️  Warning: Failed to process images:', error);
-            // Continue even if image processing fails
+            console.log('✓ Images uploaded and references updated');
           }
         } else if (isDebugMode) {
           console.log('DEBUG: No images with paths found in wiki markup');
@@ -455,30 +547,25 @@ program
           console.log(`DEBUG: Base directory: ${baseDir}`);
         }
 
-        try {
-          const { changed } = await client.processAdfImages(content.data, responseId, baseDir);
+        const { changed } = await client.processAdfImages(content.data, responseId, baseDir);
 
-          if (changed) {
-            console.log('Processing and uploading images...');
+        if (changed) {
+          console.log('Processing and uploading images...');
 
-            // Get current page to get version number
-            const currentPage = await client.getPage(responseId);
-            const currentVersion = currentPage.version?.number || 1;
+          // Get current page to get version number
+          const currentPage = await client.getPage(responseId);
+          const currentVersion = currentPage.version?.number || 1;
 
-            pageResponse = await client.updatePage(
-              responseId,
-              pageTitle,
-              content.data,
-              currentVersion + 1
-            );
+          pageResponse = await client.updatePage(
+            responseId,
+            pageTitle,
+            content.data,
+            currentVersion + 1
+          );
 
-            console.log('✓ Images uploaded and references updated');
-          } else if (isDebugMode) {
-            console.log('DEBUG: No local images found in ADF content');
-          }
-        } catch (error) {
-          console.warn('⚠️  Warning: Failed to process images:', error);
-          // Continue even if image processing fails
+          console.log('✓ Images uploaded and references updated');
+        } else if (isDebugMode) {
+          console.log('DEBUG: No local images found in ADF content');
         }
       }
 
@@ -497,7 +584,11 @@ program
 
       console.log(`Page URL: ${pageUrl}`);
     } catch (error: unknown) {
-      logError('Push to Confluence failed', error);
+      if (error instanceof ImageUploadError && !isDebugMode) {
+        console.error(`❌ ${error.message}`);
+      } else {
+        logError('Push to Confluence failed', error);
+      }
       process.exit(1);
     }
   });

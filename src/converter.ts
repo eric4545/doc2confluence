@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import * as adfBuilders from '@atlaskit/adf-utils/builders';
 import Ajv from 'ajv';
 import { parse as parseCsv } from 'csv-parse';
 import createDOMPurify from 'dompurify';
@@ -8,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import * as marked from 'marked';
 import * as showdown from 'showdown';
 import type { ConfluenceClient, ImageUploadResponse } from './confluence';
+import { IMAGE_EXTENSIONS, resolveLocalAsset } from './security';
 
 // Define ADFEntity type since we can't import it
 export interface ADFEntity {
@@ -23,7 +23,7 @@ const ADF_SCHEMA_PATH = path.join(process.cwd(), 'cache', 'adf-schema.json');
 
 // Initialize DOMPurify with JSDOM (required for Node.js environment)
 const window = new JSDOM('').window;
-const _purify = createDOMPurify(window);
+const purify = createDOMPurify(window);
 
 export interface ConversionOptions {
   expandMacros?: boolean;
@@ -271,39 +271,33 @@ export class Converter {
         const isTaskList = listToken.items.some((item) => item.task === true);
 
         if (isTaskList) {
-          // Check if taskList is available (without triggering linter warnings)
-          if (
-            typeof adfBuilders.taskList === 'function' &&
-            typeof adfBuilders.taskItem === 'function'
-          ) {
-            // Create a task list directly
-            console.log('Creating task list with items:', listToken.items);
+          // Create a task list directly
+          console.log('Creating task list with items:', listToken.items);
 
-            // Log each task item
-            listToken.items.forEach((item, index) => {
-              console.log(`Task ${index}:`, {
-                text: item.text,
-                task: item.task,
-                checked: item.checked,
-              });
+          // Log each task item
+          listToken.items.forEach((item, index) => {
+            console.log(`Task ${index}:`, {
+              text: item.text,
+              task: item.task,
+              checked: item.checked,
             });
+          });
 
-            return {
-              type: 'taskList',
-              content: await Promise.all(
-                listToken.items.map(async (item) => {
-                  return {
-                    type: 'taskItem',
-                    attrs: {
-                      localId: this.generateLocalId(),
-                      state: item.checked ? 'DONE' : 'TODO',
-                    },
-                    content: this.processTaskItemContent(item.text, options),
-                  };
-                })
-              ),
-            };
-          }
+          return {
+            type: 'taskList',
+            content: await Promise.all(
+              listToken.items.map(async (item) => {
+                return {
+                  type: 'taskItem',
+                  attrs: {
+                    localId: this.generateLocalId(),
+                    state: item.checked ? 'DONE' : 'TODO',
+                  },
+                  content: this.processTaskItemContent(item.text, options),
+                };
+              })
+            ),
+          };
         }
 
         // Regular list - process each item and check for nested task lists
@@ -824,8 +818,11 @@ export class Converter {
     }
 
     try {
-      const imagePath = path.resolve(options.basePath || '', token.href);
-      const filename = path.basename(imagePath);
+      const imagePath = resolveLocalAsset(token.href, options.basePath || process.cwd(), {
+        extensions: IMAGE_EXTENSIONS,
+        kind: 'image',
+      });
+      const filename = path.basename(token.href);
       let response: ImageUploadResponse;
       if (options.pageId) {
         // Preferred: attach directly to the target page so Server ri:attachment resolves.
@@ -892,7 +889,10 @@ export class Converter {
     options: ConversionOptions
   ): Promise<ADFEntity | null> {
     try {
-      const fullPath = path.resolve(options.basePath || '', csvPath);
+      const fullPath = resolveLocalAsset(csvPath, options.basePath || process.cwd(), {
+        extensions: new Set(['.csv']),
+        kind: 'CSV import',
+      });
       const content = await fs.readFile(fullPath, 'utf-8');
       return this.parseCsvToTable(content, {});
     } catch (error) {
@@ -1280,8 +1280,9 @@ export class Converter {
       requireSpaceBeforeHeadingText: true, // Require space after # for headers
     });
 
-    // Convert markdown to HTML
-    const html = converter.makeHtml(markdown.trim());
+    // Convert markdown to HTML, then sanitize: the HTML macro renders its body verbatim for
+    // every page viewer, so raw <script>/event-handler HTML in the source would be stored XSS.
+    const html = purify.sanitize(converter.makeHtml(markdown.trim()));
 
     // Create an ADF document with HTML macro structure
     // The HTML macro in Confluence uses the 'html' extension key
